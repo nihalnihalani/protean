@@ -56,7 +56,7 @@ protean/
 ├── Dockerfile.hud            # CUDA+torch+triton, uid-1000 agent, TRITON_CACHE_DIR baked
 ├── docs/
 │   ├── IMPLEMENTATION_PLAN.md          # ⭐ the build bible (full)
-│   ├── COMPONENT_SPECS_AND_DEBATE.md   # per-component specs + devil's-advocate debate
+│   ├── IMPLEMENTATION_components.md     # per-component specs + devil's-advocate debate
 │   ├── BUILD_CHECKLIST.md              # condensed Friday→Sunday actionable checklist
 │   ├── papers/davinci-kernel-2606.16497.pdf
 │   └── strategy/                       # how we got here (audit, debate, track intel, finalist specs)
