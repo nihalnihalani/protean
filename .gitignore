@@ -1,0 +1,14 @@
+.DS_Store
+__pycache__/
+*.pyc
+.env
+.venv/
+venv/
+node_modules/
+# training/runtime artifacts
+*.ckpt
+checkpoints/
+runs/
+wandb/
+triton-cache/
+manifest_*.jsonl

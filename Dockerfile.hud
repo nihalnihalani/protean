@@ -1,0 +1,31 @@
+# Protean environment image.
+# CUDA + torch + triton, a demoted uid-1000 agent user, TRITON_CACHE_DIR baked + warmed
+# (kills 30–120s JIT cold-start per rollout), hidden grader baked root:700.
+FROM nvidia/cuda:12.4.1-devel-ubuntu22.04
+
+ENV DEBIAN_FRONTEND=noninteractive
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        python3.11 python3-pip util-linux git && \
+    rm -rf /var/lib/apt/lists/*
+
+# Triton compile cache — baked, world-writable, warmed at build time
+ENV TRITON_CACHE_DIR=/triton-cache
+RUN mkdir -p /triton-cache && chmod 777 /triton-cache
+
+RUN pip3 install --no-cache-dir torch triton numpy pydantic "hud-python[agents]>=0.6.5"
+
+# Demoted agent user (cannot read the root:700 hidden grader/reference)
+RUN useradd -m -u 1000 agent
+
+# App
+WORKDIR /mcp_server
+COPY src/protean /mcp_server
+# Hidden verifier baked as root, mode 700 — the moat
+RUN chmod -R 700 /mcp_server/tasks/*/donotaccess && chown -R root:root /mcp_server/tasks/*/donotaccess
+
+# Warm the Triton JIT cache so the first real rollout doesn't eat the cold-start
+RUN python3 -c "import torch,triton,triton.language as tl;\n\
+import warnings; warnings.filterwarnings('ignore')" || true
+# TODO: replace the line above with a real trivial @triton.jit warmup kernel compile (see IMPLEMENTATION_PLAN §4.4)
+
+ENV AGENT_UID=1000 AGENT_GID=1000 HOME=/home/agent USER=agent
