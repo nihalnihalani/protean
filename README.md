@@ -4,6 +4,15 @@
 
 > *Kernels that are fast on any shape.*
 
+### 📋 Start here
+- **[docs/IMPLEMENTATION_PLAN.md](docs/IMPLEMENTATION_PLAN.md)** — the build bible (source of truth)
+- **[docs/TECHNICAL_SPEC.md](docs/TECHNICAL_SPEC.md)** — mathematical & technical deep-dive (reward math, GRPO objective, timing protocol, generalization statistics, anti-hack soundness)
+- **[docs/BUILD_CHECKLIST.md](docs/BUILD_CHECKLIST.md)** — condensed Friday→Sunday actionable checklist
+- **[docs/IMPLEMENTATION_components.md](docs/IMPLEMENTATION_components.md)** — per-component specs + devil's-advocate debate
+
+**Build status: 📐 PLAN COMPLETE / ⛔ NOT YET BUILT.** Source files under `src/` and `train/` are stubs with
+pseudocode and TODOs extracted from the plan. Implement against `docs/IMPLEMENTATION_PLAN.md` + `docs/TECHNICAL_SPEC.md`.
+
 Protean is a reusable [HUD](https://www.hud.ai) reinforcement-learning environment for the
 **HUD × YC Frontier RL Environments Hackathon**. A small model (Qwen2.5-Coder-7B) learns multi-turn
 Triton GPU-kernel optimization. Each rollout is graded by a hidden, root-owned verifier:
