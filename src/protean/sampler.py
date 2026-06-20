@@ -2,6 +2,7 @@
 
 # sampler.py — cross-machine determinism via sha256 of a canonical string (NOT builtin hash())
 import hashlib, random
+from protean.splits import TRAIN_M, TEST_M   # FIX (devil's-advocate R2): these were used unimported -> NameError
 
 def _rng(op, idx, split):
     s = f"{op}|{idx}|{split}"

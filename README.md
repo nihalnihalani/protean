@@ -9,6 +9,7 @@
 - **[docs/TECHNICAL_SPEC.md](docs/TECHNICAL_SPEC.md)** — mathematical & technical deep-dive (reward math, GRPO objective, timing protocol, generalization statistics, anti-hack soundness)
 - **[docs/BUILD_CHECKLIST.md](docs/BUILD_CHECKLIST.md)** — condensed Friday→Sunday actionable checklist
 - **[docs/IMPLEMENTATION_components.md](docs/IMPLEMENTATION_components.md)** — per-component specs + devil's-advocate debate
+- **[docs/OPEN_ISSUES.md](docs/OPEN_ISSUES.md)** — devil's-advocate findings + open design risks (read before building)
 
 **Build status: 📐 PLAN COMPLETE / ⛔ NOT YET BUILT.** Source files under `src/` and `train/` are stubs with
 pseudocode and TODOs extracted from the plan. Implement against `docs/IMPLEMENTATION_PLAN.md` + `docs/TECHNICAL_SPEC.md`.
