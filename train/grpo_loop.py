@@ -23,7 +23,7 @@ from reward import _extract_code, _load_grade
 from callbacks import CostAbortCallback, RewardCurveLogger
 from calibrate import calibrate
 from protean.tasks import TASKS
-from protean.shape_sampler import sample_shape, l1_curriculum_pool, sample_shape_curriculum
+from protean.sampler import l1_curriculum_pool
 from protean.task_catalog import OPS_BY_NAME
 
 # Reference step counter to allow dynamic reward adjustments if needed
