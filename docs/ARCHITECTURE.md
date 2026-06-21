@@ -1,6 +1,6 @@
 # Protean Architecture
 
-Protean is intentionally small. The v1 architecture has one job: grade a candidate Triton kernel against PyTorch eager on train and held-out shapes, then emit a plain reward report.
+Protean is intentionally small, but the product is an optimizer, not just a grader. The v1 architecture starts from a working kernel, edits the current best implementation, grades each candidate, accepts improvements, and logs the full trace.
 
 ## Flow
 
@@ -9,6 +9,8 @@ candidate source
   -> static anti-hack checks
   -> CUDA benchmark
   -> structured reward
+  -> accept/reject as current best
+  -> trial log + best kernel
   -> demo JSON/Markdown
 ```
 
@@ -44,6 +46,13 @@ candidate source
   - Known-good hand Triton kernel.
   - Red-team examples used by tests and scripts.
 
+- `src/protean/optimizer.py`
+  - Runs the improvement loop.
+  - Starts from the current best kernel.
+  - Generates edits, evaluates them, accepts improvements, and writes logs.
+  - Saves every candidate source file and records score deltas against the current best.
+  - The current edit policy is deterministic; a model-backed policy should replace it next.
+
 ## Scripts
 
 - `scripts/check_redteam.py`
@@ -56,6 +65,10 @@ candidate source
   - Runs train and held-out shapes.
   - Writes `demo/protean-demo-results.md` and `.json`.
 
+- `scripts/run_optimizer.py`
+  - Runs the iterative optimizer.
+  - Writes `runs/protean-overnight/best_kernel.py`, `trials.jsonl`, and `summary.json`.
+
 ## Spark Runtime
 
 The verified GPU target is `ssh spark`.
@@ -67,6 +80,7 @@ python -m pytest -q
 python scripts/check_redteam.py
 python scripts/smoke_verifier.py
 python scripts/run_demo_benchmark.py
+python scripts/run_optimizer.py --max-rounds 1
 ```
 
 Spark has already produced a real held-out delta for `elementwise_add_relu`.
@@ -75,9 +89,11 @@ Spark has already produced a real held-out delta for `elementwise_add_relu`.
 
 Add features in this order only:
 
-1. `rmsnorm` as the second op.
-2. Profiler-based runtime attribution if needed.
-3. HUD remote packaging.
-4. GRPO training.
+1. Model-backed kernel edit policy.
+2. Harness and reward mutation policy with explicit logs.
+3. `rmsnorm` as the second op.
+4. Profiler-based runtime attribution if needed.
+5. HUD remote packaging.
+6. GRPO training.
 
-Do not add training code before the verifier has at least two stable ops.
+Do not add training code before the optimizer loop is stable on at least two ops.

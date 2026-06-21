@@ -1,12 +1,12 @@
 # Protean
 
-Small verifier-first GPU-kernel RL environment.
+Small overnight GPU-kernel optimizer.
 
 Protean starts with one promise:
 
-> Produce one credible PyTorch-eager vs hand-written Triton delta on shapes the kernel did not see during development.
+> Start from a working GPU kernel, keep editing the current best version overnight, and wake up with the fastest correct kernel plus a full optimization trace.
 
-No GRPO is required for v1. Training can be added after the verifier is trustworthy.
+The verifier is the measurement core. The product is the improvement loop around it.
 
 ## What Works Now
 
@@ -16,6 +16,7 @@ No GRPO is required for v1. Training can be added after the verifier is trustwor
 - Static anti-hack checks for PyTorch passthrough and no-`@triton.jit` submissions.
 - GPU grader that checks correctness, dtype, shape, `@triton.jit` usage, and CUDA timing.
 - Demo scripts that output JSON and Markdown benchmark artifacts.
+- Iterative optimizer that edits the current best kernel, evaluates each candidate, accepts improvements, and logs every trial.
 
 ## Install
 
@@ -58,10 +59,21 @@ Generate the demo benchmark:
 python scripts/run_demo_benchmark.py
 ```
 
+Run the optimizer loop:
+
+```bash
+python scripts/run_optimizer.py --max-rounds 1
+```
+
 Outputs:
 
 - `demo/protean-demo-results.md`
 - `demo/protean-demo-results.json`
+- `runs/protean-overnight/best_kernel.py`
+- `runs/protean-overnight/trials.jsonl`
+- `runs/protean-overnight/summary.json`
+
+Each optimizer trial logs the implementation path, edit reason, harness settings, score before/after, delta versus the current best, acceptance decision, elapsed time, and model cost. The current deterministic policy has `model_cost_usd: 0.0`; model-backed edits should fill that field later.
 
 If CUDA, PyTorch, or Triton are missing, GPU scripts fail closed with `cuda_unavailable`.
 
@@ -85,9 +97,10 @@ Hard failures get zero reward. Slow-but-correct kernels can report correctness, 
 
 ## Add Next
 
-1. Run and record the benchmark on `ssh spark`.
-2. Add `rmsnorm` only after `elementwise_add_relu` is green.
-3. Add training only after two ops are stable.
+1. Replace the deterministic edit policy with a model-backed edit policy.
+2. Let the model tune the harness and reward settings, with every change logged.
+3. Add `rmsnorm` as the second optimization target.
+4. Add training/RL only after the optimizer loop is stable on two ops.
 
 KERNEL-FORGE notes live in `docs/strategy/KERNEL_FORGE_AUDIT.md`; they are background, not the build path.
 The daVinci-kernel paper is included under `docs/papers/` with `davinci-kernel-2606.16497.llm.txt` as the LLM-first reading companion.
