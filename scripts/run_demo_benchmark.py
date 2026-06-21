@@ -12,8 +12,14 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
 from protean.grader import grade_source
-from protean.kernels import HAND_OPTIMIZED_ELEMENTWISE_ADD_RELU
+from protean.kernels import HAND_OPTIMIZED_ELEMENTWISE_ADD_RELU, HAND_OPTIMIZED_RMSNORM
 from protean.splits import HELD_OUT_SHAPES, TRAIN_SHAPES
+
+
+KERNELS = {
+    "elementwise_add_relu": HAND_OPTIMIZED_ELEMENTWISE_ADD_RELU,
+    "rmsnorm": HAND_OPTIMIZED_RMSNORM,
+}
 
 
 def _row_markdown(row: dict) -> str:
@@ -28,6 +34,7 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--json-out", default="demo/protean-demo-results.json")
     parser.add_argument("--md-out", default="demo/protean-demo-results.md")
+    parser.add_argument("--op", choices=sorted(KERNELS), default="elementwise_add_relu")
     parser.add_argument("--reps", type=int, default=50)
     parser.add_argument("--warmup", type=int, default=10)
     args = parser.parse_args()
@@ -37,7 +44,8 @@ def main() -> int:
         for shape in shapes:
             rows.append(
                 grade_source(
-                    HAND_OPTIMIZED_ELEMENTWISE_ADD_RELU,
+                    KERNELS[args.op],
+                    op=args.op,
                     split=split,
                     shape=shape,
                     reps=args.reps,
@@ -54,7 +62,7 @@ def main() -> int:
     md = [
         "# Protean Demo Benchmark",
         "",
-        "Base is PyTorch eager `relu(x + y)`. Candidate is the hand-optimized Triton kernel.",
+        f"Op: `{args.op}`. Base is PyTorch eager. Candidate is the hand-optimized Triton kernel.",
         "",
         "| Split | Shape | Correct | Speedup | Eager ms | Triton ms | Reward | Caps |",
         "|---|---:|---|---:|---:|---:|---:|---|",

@@ -13,6 +13,9 @@ BANNED_CALLS = {
     "torch.matmul",
     "torch.bmm",
     "torch.einsum",
+    "torch.mean",
+    "torch.rsqrt",
+    "torch.sum",
     "torch.nn.functional.relu",
 }
 BANNED_NAMES = {"eval", "exec", "compile", "__import__", "open", "getattr"}

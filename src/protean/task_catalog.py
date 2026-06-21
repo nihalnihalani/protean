@@ -30,6 +30,15 @@ OPS = (
         speedup_floor=1.1,
         prompt_path="src/protean/tasks/elementwise_add_relu/prompt.md",
     ),
+    OpSpec(
+        name="rmsnorm",
+        dtype="float16",
+        rtol=1e-2,
+        atol=1e-2,
+        p_target=1.2,
+        speedup_floor=1.05,
+        prompt_path="src/protean/tasks/rmsnorm/prompt.md",
+    ),
 )
 
 OPS_BY_NAME = {op.name: op for op in OPS}

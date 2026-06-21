@@ -17,11 +17,11 @@ from protean.model.rl_layer import accept_candidate, score, score_delta
 from protean.splits import HELD_OUT_SHAPES, TRAIN_SHAPES
 
 
-def evaluate_kernel(source: str, *, reps: int, warmup: int) -> dict:
+def evaluate_kernel(source: str, *, op: str = "elementwise_add_relu", reps: int, warmup: int) -> dict:
     rows = []
     for split, shapes in (("train", TRAIN_SHAPES), ("held_out", HELD_OUT_SHAPES)):
         for shape in shapes:
-            rows.append(grade_source(source, split=split, shape=shape, reps=reps, warmup=warmup))
+            rows.append(grade_source(source, op=op, split=split, shape=shape, reps=reps, warmup=warmup))
 
     held_out = [row for row in rows if row["split"] == "held_out"]
     correct_held_out = [row for row in held_out if row["correct"] and not row["caps"]]
@@ -43,6 +43,9 @@ def run_optimization(
     max_rounds: int = 1,
     seed_source: str = HAND_OPTIMIZED_ELEMENTWISE_ADD_RELU,
     policy_path: str | Path | None = None,
+    edit_policy: str = "local",
+    op: str = "elementwise_add_relu",
+    fireworks_model: str | None = None,
 ) -> dict:
     out = Path(out_dir)
     out.mkdir(parents=True, exist_ok=True)
@@ -54,7 +57,7 @@ def run_optimization(
 
     best_source = seed_source
     started = time.time()
-    best_summary = evaluate_kernel(best_source, reps=30, warmup=8)
+    best_summary = evaluate_kernel(best_source, op=op, reps=30, warmup=8)
     best_score = score(best_summary)
     best_path.write_text(best_source)
     seed_path = candidate_dir / "0000_seed.py"
@@ -82,11 +85,23 @@ def run_optimization(
         )
 
         for round_idx in range(max_rounds):
-            edits = (
-                learned_kernel_edits(best_source, best_summary, str(policy_path))
-                if policy_path is not None
-                else local_kernel_edits(best_source)
-            )
+            if edit_policy == "fireworks":
+                from protean.model.fireworks_policy import DEFAULT_FIREWORKS_MODEL, fireworks_kernel_edit
+
+                edits = [
+                    fireworks_kernel_edit(
+                        op=op,
+                        current_best=best_source,
+                        best_summary=best_summary,
+                        model=fireworks_model or DEFAULT_FIREWORKS_MODEL,
+                    )
+                ]
+            elif policy_path is not None or edit_policy == "learned":
+                if policy_path is None:
+                    raise ValueError("policy_path is required when edit_policy='learned'")
+                edits = learned_kernel_edits(best_source, best_summary, str(policy_path))
+            else:
+                edits = local_kernel_edits(best_source)
             for edit in edits:
                 trial_count += 1
                 candidate_path = candidate_dir / f"{trial_count:04d}_{edit.name}.py"
@@ -95,6 +110,7 @@ def run_optimization(
                 before_summary = best_summary
                 candidate_summary = evaluate_kernel(
                     edit.source,
+                    op=op,
                     reps=int(edit.harness["reps"]),
                     warmup=int(edit.harness["warmup"]),
                 )
@@ -142,6 +158,8 @@ def run_optimization(
         "accepted": accepted_count,
         "elapsed_sec": round(time.time() - started, 6),
         "policy_path": str(policy_path) if policy_path is not None else None,
+        "edit_policy": edit_policy,
+        "op": op,
     }
     summary_path.write_text(json.dumps(final, indent=2, sort_keys=True) + "\n")
     return final

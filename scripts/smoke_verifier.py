@@ -6,17 +6,28 @@ from __future__ import annotations
 import json
 import sys
 from pathlib import Path
+import argparse
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
 from protean.grader import grade_source
-from protean.kernels import HAND_OPTIMIZED_ELEMENTWISE_ADD_RELU
+from protean.kernels import HAND_OPTIMIZED_ELEMENTWISE_ADD_RELU, HAND_OPTIMIZED_RMSNORM
+
+
+KERNELS = {
+    "elementwise_add_relu": HAND_OPTIMIZED_ELEMENTWISE_ADD_RELU,
+    "rmsnorm": HAND_OPTIMIZED_RMSNORM,
+}
 
 
 def main() -> int:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--op", choices=sorted(KERNELS), default="elementwise_add_relu")
+    args = parser.parse_args()
     grade = grade_source(
-        HAND_OPTIMIZED_ELEMENTWISE_ADD_RELU,
+        KERNELS[args.op],
+        op=args.op,
         split="held_out",
         reps=20,
         warmup=5,

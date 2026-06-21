@@ -26,6 +26,7 @@ The verifier is the measurement core. The product is the improvement loop around
 ## What Works Now
 
 - One op: `elementwise_add_relu`, equivalent to `torch.relu(x + y)`.
+- Second op: `rmsnorm`, equivalent to vector RMS normalization with learned weight.
 - Train shapes: `1024`, `2048`, `4096`.
 - Held-out shapes: `1536`, `3072`, `5632`.
 - Static anti-hack checks for PyTorch passthrough and no-`@triton.jit` submissions.
@@ -85,7 +86,14 @@ Train the v1 learned controller from the optimizer trace:
 
 ```bash
 python scripts/train_tiny_policy.py --trace runs/protean-overnight/trials.jsonl
-python scripts/run_optimizer.py --max-rounds 1 --policy-path runs/protean-overnight/tiny_policy.json
+python scripts/run_optimizer.py --max-rounds 1 --edit-policy learned --policy-path runs/protean-overnight/tiny_policy.json
+```
+
+Ask Fireworks `gpt-oss-120b` for a model-generated kernel edit:
+
+```bash
+export FIREWORKS_API_KEY=...
+python scripts/run_optimizer.py --max-rounds 1 --edit-policy fireworks
 ```
 
 Outputs:
@@ -123,7 +131,7 @@ Hard failures get zero reward. Slow-but-correct kernels can report correctness, 
 
 1. Use the 1M policy head as the default learned edit-ordering policy after enough traces exist.
 2. Let the model improve `src/protean/model/rl_layer.py` and `src/protean/model/harness.py`, with every change logged.
-3. Add `rmsnorm` as the second optimization target.
+3. Make Fireworks-generated edits robust enough to run unattended overnight.
 4. Add training/RL only after the optimizer loop is stable on two ops.
 
 KERNEL-FORGE notes live in `docs/strategy/KERNEL_FORGE_AUDIT.md`; they are background, not the build path.

@@ -27,12 +27,53 @@ def solution(x, y):
 '''
 
 
+HAND_OPTIMIZED_RMSNORM = r'''
+import torch
+import triton
+import triton.language as tl
+
+
+@triton.jit
+def _rmsnorm_kernel(x_ptr, weight_ptr, out_ptr, n_elements: tl.constexpr, block_size: tl.constexpr, eps: tl.constexpr):
+    offsets = tl.arange(0, block_size)
+    mask = offsets < n_elements
+    x = tl.load(x_ptr + offsets, mask=mask, other=0.0).to(tl.float32)
+    weight = tl.load(weight_ptr + offsets, mask=mask, other=0.0).to(tl.float32)
+    mean_square = tl.sum(x * x, axis=0) / n_elements
+    rstd = tl.rsqrt(mean_square + eps)
+    out = x * rstd * weight
+    tl.store(out_ptr + offsets, out, mask=mask)
+
+
+def _next_power_of_2(n):
+    return 1 << (n - 1).bit_length()
+
+
+def solution(x, weight):
+    out = torch.empty_like(x)
+    n_elements = x.numel()
+    block_size = _next_power_of_2(n_elements)
+    _rmsnorm_kernel[(1,)](x, weight, out, n_elements, block_size=block_size, eps=1e-5)
+    return out
+'''
+
+
 PYTORCH_PASSTHROUGH = r'''
 import torch
 
 
 def solution(x, y):
     return torch.relu(x + y)
+'''
+
+
+PYTORCH_RMSNORM_PASSTHROUGH = r'''
+import torch
+
+
+def solution(x, weight):
+    x_f32 = x.float()
+    return (x_f32 * torch.rsqrt(torch.mean(x_f32 * x_f32, dim=-1, keepdim=True) + 1e-5) * weight.float()).to(x.dtype)
 '''
 
 

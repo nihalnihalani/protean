@@ -18,10 +18,20 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--out-dir", default="runs/protean-overnight")
     parser.add_argument("--max-rounds", type=int, default=1)
+    parser.add_argument("--op", default="elementwise_add_relu")
+    parser.add_argument("--edit-policy", choices=["local", "learned", "fireworks"], default="local")
     parser.add_argument("--policy-path", help="Optional tiny policy JSON used to order kernel edits.")
+    parser.add_argument("--fireworks-model", default=None)
     args = parser.parse_args()
 
-    result = run_optimization(out_dir=ROOT / args.out_dir, max_rounds=args.max_rounds, policy_path=args.policy_path)
+    result = run_optimization(
+        out_dir=ROOT / args.out_dir,
+        max_rounds=args.max_rounds,
+        op=args.op,
+        edit_policy=args.edit_policy,
+        policy_path=args.policy_path,
+        fireworks_model=args.fireworks_model,
+    )
     print(json.dumps(result, indent=2, sort_keys=True))
     return 0
 

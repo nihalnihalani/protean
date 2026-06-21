@@ -1,4 +1,4 @@
-"""CUDA verifier for the elementwise add+ReLU MVP."""
+"""CUDA verifier for Protean kernel candidates."""
 
 from __future__ import annotations
 
@@ -17,19 +17,38 @@ from protean.anti_hack import contains_triton_jit
 from protean.task_catalog import OpSpec
 
 
-def make_inputs(n: int, dtype: str, seed: int) -> tuple[torch.Tensor, torch.Tensor]:
+def make_inputs(n: int, dtype: str, seed: int, op: str) -> tuple[torch.Tensor, ...]:
     if not torch.cuda.is_available():
         raise RuntimeError("CUDA is required for Protean benchmark verification")
     torch.manual_seed(seed)
     torch.cuda.manual_seed_all(seed)
     torch_dtype = getattr(torch, dtype)
     x = torch.randn((n,), device="cuda", dtype=torch_dtype)
-    y = torch.randn((n,), device="cuda", dtype=torch_dtype)
-    return x, y
+    if op == "elementwise_add_relu":
+        y = torch.randn((n,), device="cuda", dtype=torch_dtype)
+        return x, y
+    if op == "rmsnorm":
+        weight = torch.randn((n,), device="cuda", dtype=torch_dtype)
+        return x, weight
+    raise ValueError(f"unknown op: {op}")
 
 
 def eager_elementwise_add_relu(x: torch.Tensor, y: torch.Tensor) -> torch.Tensor:
     return torch.relu(x + y)
+
+
+def eager_rmsnorm(x: torch.Tensor, weight: torch.Tensor, eps: float = 1e-5) -> torch.Tensor:
+    x_f32 = x.float()
+    rms = torch.rsqrt(torch.mean(x_f32 * x_f32, dim=-1, keepdim=True) + eps)
+    return (x_f32 * rms * weight.float()).to(dtype=x.dtype)
+
+
+def eager_fn_for_op(op: str):
+    if op == "elementwise_add_relu":
+        return eager_elementwise_add_relu
+    if op == "rmsnorm":
+        return eager_rmsnorm
+    raise ValueError(f"unknown op: {op}")
 
 
 def load_solution(src: str):
@@ -46,7 +65,7 @@ def load_solution(src: str):
     sys.modules[name] = module
     spec.loader.exec_module(module)
     if "solution" not in module.__dict__:
-        raise ValueError("candidate must define solution(x, y)")
+        raise ValueError("candidate must define solution(...)")
     return module
 
 
@@ -80,25 +99,26 @@ def bench_source(
 ) -> dict:
     module = load_solution(src)
     solution = module.solution
+    eager_fn = eager_fn_for_op(spec.name)
 
-    x, y = make_inputs(n, spec.dtype, seed=42)
-    out_candidate = solution(x, y)
-    out_ref = eager_elementwise_add_relu(x, y)
+    inputs = make_inputs(n, spec.dtype, seed=42, op=spec.name)
+    out_candidate = solution(*inputs)
+    out_ref = eager_fn(*inputs)
     dtype_ok = out_candidate.dtype == out_ref.dtype
     shape_ok = tuple(out_candidate.shape) == tuple(out_ref.shape)
     correct_pre = False
     if dtype_ok and shape_ok:
         correct_pre = torch.allclose(out_candidate, out_ref, rtol=spec.rtol, atol=spec.atol)
 
-    eager_args = make_inputs(n, spec.dtype, seed=43)
+    eager_args = make_inputs(n, spec.dtype, seed=43, op=spec.name)
     candidate_args = tuple(t.clone() for t in eager_args)
-    t_eager_ms = _time_cuda(eager_elementwise_add_relu, eager_args, reps=reps, warmup=warmup)
+    t_eager_ms = _time_cuda(eager_fn, eager_args, reps=reps, warmup=warmup)
     t_kernel_ms = _time_cuda(solution, candidate_args, reps=reps, warmup=warmup)
     launches_timed = reps if contains_triton_jit(src) else 0
 
-    x_post, y_post = make_inputs(n, spec.dtype, seed=44)
-    out_post = solution(x_post, y_post)
-    ref_post = eager_elementwise_add_relu(x_post, y_post)
+    post_inputs = make_inputs(n, spec.dtype, seed=44, op=spec.name)
+    out_post = solution(*post_inputs)
+    ref_post = eager_fn(*post_inputs)
     correct_post = False
     if tuple(out_post.shape) == tuple(ref_post.shape) and out_post.dtype == ref_post.dtype:
         correct_post = torch.allclose(out_post, ref_post, rtol=spec.rtol, atol=spec.atol)

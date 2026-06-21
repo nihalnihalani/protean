@@ -58,6 +58,7 @@ candidate source
   - `policy.py` proposes kernel edits.
   - `rl_layer.py` scores and accepts candidates.
   - `harness.py` owns benchmark knobs the agent can tune.
+  - `fireworks_policy.py` asks Fireworks `gpt-oss-120b` for model-generated kernel edits.
   - `tiny_policy.py` trains the v1 1M-parameter learned policy head from verifier traces.
   - `prompts/` and `configs/` hold the model prompt contract and active policy config.
   - The current edit policy is deterministic; a model-backed policy should replace it next.
@@ -95,7 +96,8 @@ python scripts/smoke_verifier.py
 python scripts/run_demo_benchmark.py
 python scripts/run_optimizer.py --max-rounds 1
 python scripts/train_tiny_policy.py --trace runs/protean-overnight/trials.jsonl
-python scripts/run_optimizer.py --max-rounds 1 --policy-path runs/protean-overnight/tiny_policy.json
+python scripts/run_optimizer.py --max-rounds 1 --edit-policy learned --policy-path runs/protean-overnight/tiny_policy.json
+python scripts/run_optimizer.py --max-rounds 1 --edit-policy fireworks
 ```
 
 Spark has already produced a real held-out delta for `elementwise_add_relu`.
@@ -107,7 +109,7 @@ Add features in this order only:
 1. Use the 1M policy head as the default learned edit policy after enough traces exist.
 2. Model-backed kernel edit policy in `src/protean/model/policy.py`.
 3. Self-improvement policy for `src/protean/model/rl_layer.py` and `src/protean/model/harness.py`.
-4. `rmsnorm` as the second op.
+4. Expand optimizer edit policies beyond `elementwise_add_relu`.
 5. Profiler-based runtime attribution if needed.
 6. HUD remote packaging.
 7. GRPO training.
