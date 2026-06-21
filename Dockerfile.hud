@@ -26,13 +26,17 @@ COPY requirements-train.txt /app/requirements-train.txt
 RUN python -m pip install --no-cache-dir -r /app/requirements-train.txt
 
 # trl 0.15.2 hard-imports mergekit in callbacks.py unconditionally (upstream bug).
-# We never use ModelMergeCallback, so install a minimal stub that provides the one
-# symbol trl needs: mergekit.config.MergeConfiguration
+# We never use ModelMergeCallback, so install a minimal stub that satisfies all
+# mergekit imports in trl/mergekit_utils.py:
+#   mergekit.config.MergeConfiguration
+#   mergekit.merge.MergeOptions, run_merge
 RUN mkdir -p /opt/venv/lib/python3.11/site-packages/mergekit && \
     touch /opt/venv/lib/python3.11/site-packages/mergekit/__init__.py && \
     printf 'class MergeConfiguration:\n    pass\n' \
         > /opt/venv/lib/python3.11/site-packages/mergekit/config.py && \
-    python3 -c "from mergekit.config import MergeConfiguration; print('mergekit stub OK')"
+    printf 'class MergeOptions:\n    pass\ndef run_merge(*a, **kw):\n    raise NotImplementedError("mergekit stub")\n' \
+        > /opt/venv/lib/python3.11/site-packages/mergekit/merge.py && \
+    python3 -c "from mergekit.config import MergeConfiguration; from mergekit.merge import MergeOptions, run_merge; print('mergekit stub OK')"
 
 # Cache layer: Install HUD SDK
 RUN python -m pip install --no-cache-dir "hud-python[agents]==0.6.6"
