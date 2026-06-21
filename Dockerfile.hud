@@ -1,23 +1,90 @@
+# Protean environment image.
+# CUDA + torch + triton, a demoted uid-1000 agent user, TRITON_CACHE_DIR baked + warmed
+# (kills 30–120s JIT cold-start per rollout), hidden grader baked root:700.
 FROM nvidia/cuda:12.4.1-devel-ubuntu22.04
 
 ENV DEBIAN_FRONTEND=noninteractive
-ENV TRITON_CACHE_DIR=/triton-cache
-
 RUN apt-get update && apt-get install -y --no-install-recommends \
-        python3.11 python3-pip git util-linux && \
+        python3.11 python3-pip python-is-python3 util-linux git && \
     rm -rf /var/lib/apt/lists/*
 
+# Triton compile cache — baked, world-writable, warmed at build time
+ENV TRITON_CACHE_DIR=/triton-cache
 RUN mkdir -p /triton-cache && chmod 777 /triton-cache
 
-WORKDIR /app
-COPY . /app
-RUN pip3 install --no-cache-dir -e ".[gpu,hud]"
+RUN pip3 install --no-cache-dir torch triton numpy pydantic "hud-python[agents]"
 
+# Demoted agent user (cannot read the root:700 hidden grader/reference)
 RUN useradd -m -u 1000 agent
 
-# Hidden verifier directories are unreadable by the demoted agent user in HUD runs.
-RUN find /app/src/protean/tasks -path '*/donotaccess' -type d -exec chmod 700 {} + && \
-    find /app/src/protean/tasks -path '*/donotaccess/*' -type f -exec chmod 600 {} + && \
-    chown -R root:root /app/src/protean/tasks
+# App
+WORKDIR /mcp_server
+COPY src/protean /mcp_server/protean
+COPY train /mcp_server/train
+COPY skilllib /mcp_server/skilllib
+# Bake REWARDS_HASH in grade.py and calibrate.py before making them read-only
+RUN REWARDS_SHA=$(sha256sum /mcp_server/protean/rewards.py | awk '{print $1}') && \
+    sed -i "s|<sha256 baked at image build>|${REWARDS_SHA}|g" \
+        /mcp_server/protean/tasks/elementwise_add_relu/donotaccess/grade.py \
+        /mcp_server/train/calibrate.py && \
+    echo "Baked REWARDS_HASH=${REWARDS_SHA}"
+
+# Create canonical /donotaccess hierarchy — the moat.
+# Single source of truth for rewards.py + per-op graders + reference impls + reward_config.
+# Owned root:700 so agent (uid 1000) physically cannot read it.
+RUN mkdir -p /donotaccess && \
+    cp /mcp_server/protean/rewards.py /donotaccess/rewards.py && \
+    cp /mcp_server/protean/reward_config.json /donotaccess/reward_config.json && \
+    for opdir in /mcp_server/protean/tasks/*/donotaccess; do \
+        op=$(basename $(dirname $opdir)); \
+        mkdir -p /donotaccess/$op && \
+        cp $opdir/grade.py /donotaccess/$op/grade.py && \
+        cp $opdir/reference.py /donotaccess/$op/reference.py; \
+    done && \
+    chown -R root:root /donotaccess && \
+    chmod -R 700 /donotaccess && \
+    ls -laR /donotaccess
+
+# Sanity: verify root:700 and that uid 1000 (agent) cannot read.
+RUN test -f /donotaccess/rewards.py || (echo "MOAT BROKEN: /donotaccess/rewards.py missing" && exit 1) && \
+    test -f /donotaccess/elementwise_add_relu/grade.py || (echo "MOAT BROKEN: /donotaccess/elementwise_add_relu/grade.py missing" && exit 1) && \
+    test -f /donotaccess/reward_config.json || (echo "MOAT BROKEN: /donotaccess/reward_config.json missing" && exit 1) && \
+    su agent -c "cat /donotaccess/rewards.py" 2>&1 | grep -qE "(Permission denied|cannot open)" || (echo "MOAT BROKEN: agent can read /donotaccess/rewards.py" && exit 1) && \
+    echo "MOAT VERIFIED: /donotaccess/ root:700, agent locked out"
+
+# Hidden verifier baked as root, mode 700 — the moat (defense in depth)
+RUN chmod -R 700 /mcp_server/protean/tasks/*/donotaccess && chown -R root:root /mcp_server/protean/tasks/*/donotaccess
+
+# Warm the Triton JIT cache so the first real rollout doesn't eat the cold-start
+RUN echo "import triton" > warmup.py && \
+    echo "import triton.language as tl" >> warmup.py && \
+    echo "@triton.jit" >> warmup.py && \
+    echo "def add_kernel(x_ptr, y_ptr, out_ptr, n_elements, BLOCK_SIZE: tl.constexpr):" >> warmup.py && \
+    echo "    offsets = tl.arange(0, BLOCK_SIZE)" >> warmup.py && \
+    echo "    x = tl.load(x_ptr + offsets)" >> warmup.py && \
+    echo "    y = tl.load(y_ptr + offsets)" >> warmup.py && \
+    echo "    tl.store(out_ptr + offsets, x + y)" >> warmup.py && \
+    echo "src = triton.compiler.ASTSource(fn=add_kernel, signature='*fp32,*fp32,*fp32,i32', constants={'BLOCK_SIZE': 1024}, configs=[triton.Config(num_warps=4, num_stages=1)])" >> warmup.py && \
+    echo "try:" >> warmup.py && \
+    echo "    triton.compile(src)" >> warmup.py && \
+    echo "    print('Warmup succeeded!')" >> warmup.py && \
+    echo "except Exception as e:" >> warmup.py && \
+    echo "    print('Warmup failed/skipped:', e)" >> warmup.py && \
+    python3 warmup.py && rm warmup.py || true
+
+# Ensure the warmed cache is readable AND writable by the agent (uid 1000).
+# Triton appends new compiled kernels at runtime; if writes fail, the agent
+# silently falls back to recompiling everything and the warmup is wasted.
+RUN chmod -R 777 /triton-cache && \
+    ls -la /triton-cache/ && \
+    echo "TRITON_CACHE_DIR populated with $(find /triton-cache -type f | wc -l) cached files"
+
+# Sanity check that warmup actually populated the cache directory
+RUN if [ -z "$(ls -A /triton-cache)" ]; then \
+        echo "WARMUP WARNING: /triton-cache is empty after warmup — JIT cache not populated"; \
+        echo "This is non-fatal but the first kernel rollout will pay full cold-start cost"; \
+    else \
+        echo "WARMUP OK: /triton-cache populated"; \
+    fi
 
 ENV AGENT_UID=1000 AGENT_GID=1000 HOME=/home/agent USER=agent

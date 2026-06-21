@@ -1,95 +1,44 @@
-# Build Checklist
+# Protean — Build Checklist (condensed from IMPLEMENTATION_PLAN.md §6)
 
-This checklist is for a judge or teammate trying to reproduce the demo quickly.
+## The five non-negotiable laws
+1. **ONE reward file, ONE path, ZERO copies.** `rewards.py` lives only at the baked path; grader AND trainer
+   `importlib`-load it from there. Divergence is structurally impossible (kills ghost-signal training).
+2. **Friday-night prep is OFF the 24h clock and MANDATORY** (image + launch-counter smoke test + SFT checkpoint).
+3. **Single-turn GRPO is the only committed path** (multi-turn = stretch).
+4. **Held-out continuous-shape split is the frozen moat invariant** — assert disjoint at import; never re-sample at runtime.
+5. **Reframe every delta as directional** (Kevin/Dr.Kernel analog), never a hard promise.
 
-## Local CPU Checks
+## G0 — FRIDAY EVENING (off the clock)
+- [ ] `uv tool install hud-python`; `hud set HUD_API_KEY` (YC-RL-HACKATHON)
+- [ ] Verify Modal GPU = **H100/A100** (NOT AMD MI300X — Triton tooling crashes)
+- [ ] Build Modal image: bake `TRITON_CACHE_DIR=/triton-cache` + a real warmup JIT compile
+- [ ] Smoke-test `launch_probe.py` incl. the cached-path case (auto-fallback to profiler if it fails)
+- [ ] Check KernelGYM license (MIT/Apache?) → reuse its compile/bench/anti-hack harness
+- [ ] SFT warm-start: filter `hkust-nlp/drkernel-coldstart-8k` to `final_speedup≥1.2` (~200 rows), LoRA 1–2 epochs
+      → checkpoint on Volume. (Gate behind a schema probe; if columns absent, skip SFT, bootstrap via L1 curriculum.)
 
-- [x] Package imports without CUDA.
-- [x] Unit tests cover reward, split, HUD wrapper, Fireworks payload, optimizer crash logging, and tiny policy head.
-- [x] Red-team examples fail closed.
+## Saturday
+- **12:30–13:30 Block 0** — setup, deconflict, confirm fork = hud-blank (ml-template is torchtitan — DO NOT fork it)
+- **13:30–17:30 Block 1** — `rewards.py` + env skeleton; ONE op compiles→allclose→times→returns reward on H100
+- **17:30–21:00 Block 2** — Modal harness + 4-layer anti-hack + calibration (parallel). Red-team: passthrough /
+  never-launched / bf16-downcast kernels must score ~0
+- **21:00–21:30 Block 3** — GRPO wiring + run `scripts/check_calibration.py` (the go/no-go gate)
+- **21:30 Block 4** — **KICK OVERNIGHT GRPO** (trl + vLLM colocate, group=8, L1 curriculum, step-150 abort rule)
 
-```bash
-python -m pip install -e ".[test]"
-python -m pytest -q
-python scripts/check_redteam.py
-```
+## Sunday
+- **overnight Block 5** — monitor; flat at step 150 → switch to pre-recorded curve. Pre-record by ~6 AM regardless.
+- **08:00–11:00 Block 6** — held-out eval (base vs trained) → money slide (train-shape vs held-out-shape curve, error bars)
+- **11:00–13:00 Block 7** — slides + buffer. Submit by **1 PM**.
 
-Expected current result:
+## The money slide
+Train-shape reward vs **held-out-shape** reward, base vs trained, with error bars on BOTH allclose-rate and
+speedup-reward + a red-team proof screenshot + a pre-warmed hero kernel on a held-out shape + a forkable HUD env.
 
-```text
-33 passed
-```
-
-## Spark GPU Checks
-
-Verified target: `ssh spark`, Spark GB10.
-
-- [x] PyTorch + Triton installed in `/home/alhinai/.venvs/protean`.
-- [x] `elementwise_add_relu` known-good kernel passes held-out smoke.
-- [x] `rmsnorm` known-good kernel passes held-out smoke.
-- [x] HUD CLI and `hud-python` installed in the Protean venv.
-- [x] HUD key configured.
-
-```bash
-ssh spark
-cd /home/alhinai/protean
-. /home/alhinai/.venvs/protean/bin/activate
-python -m pytest -q
-python scripts/smoke_verifier.py --op elementwise_add_relu
-python scripts/smoke_verifier.py --op rmsnorm
-```
-
-## HUD Dashboard Proof
-
-- [x] HUD task discovery lists all four tasks.
-- [x] Deterministic Protean demo agent creates a HUD job with non-zero reward.
-- [x] Passing job: https://hud.ai/jobs/813e572399c842c78d5a515f7644b4ae
-
-```bash
-PYTHONPATH=src hud task list --source src/protean/env.py
-HUD_API_KEY=... PYTHONPATH=src python scripts/run_hud_demo_agent.py
-```
-
-Expected output shape:
-
-```text
-mean_reward=1.300
-elementwise_add_relu_held_out: reward=1.300 correct=True speedup=2.08x caps=[]
-elementwise_add_relu_train:    reward=1.300 correct=True speedup=1.55x caps=[]
-rmsnorm_held_out:              reward=1.300 correct=True speedup=6.87x caps=[]
-rmsnorm_train:                 reward=1.300 correct=True speedup=6.38x caps=[]
-```
-
-## Optimizer Preflight
-
-- [x] Optimizer runs all ops.
-- [x] Candidates are written to `runs/.../candidates/`.
-- [x] Trial records are written to `trials.jsonl`.
-- [x] Compile/runtime failures are logged as rejected trials.
-
-```bash
-python scripts/run_optimizer.py --all-ops --max-rounds 1 --out-dir runs/protean-hud-preflight
-```
-
-Verified Spark output:
-
-```text
-elementwise_add_relu  accepted=1/5
-rmsnorm               accepted=0/5
-```
-
-## Fireworks Overnight Run
-
-Blocked until `FIREWORKS_API_KEY` is present on Spark.
-
-```bash
-export FIREWORKS_API_KEY=...
-python scripts/run_optimizer.py --edit-policy fireworks --all-ops --max-rounds 20 --out-dir runs/protean-fireworks-overnight
-```
-
-Acceptance criteria:
-
-- [ ] Every Fireworks candidate source is saved.
-- [ ] Every trial is logged.
-- [ ] Compile/runtime errors appear as `eval_error` and rejected, not lost.
-- [ ] Summary shows accepted count, best score, tokens, and model cost metadata.
+## daVinci KEEP / CUT (total ~1.5h, on the critical path)
+| Component | Decision |
+|---|---|
+| Policy agent | KEEP-FULL |
+| PR reward (Eq1) | LITE — additive `+0.2·clip(pr,0,1)` bonus, not the multiplicative gate |
+| SFT cold-start | KEEP (Friday, off-clock) |
+| Skill library/injection | LITE/contingent on SFT skill-conditioned examples; else CUT |
+| Skill Selection + Summary agents, per-agent LOO (Eq7-9), MRS, PRS | CUT — ship `trl` GRPO and say so |

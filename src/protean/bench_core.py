@@ -1,139 +1,135 @@
-"""CUDA verifier for Protean kernel candidates."""
+"""Protean — stub extracted from docs/IMPLEMENTATION_PLAN.md (section 4). Fill in TODOs to implement."""
 
-from __future__ import annotations
-
-import statistics
-import tempfile
-import uuid
-import importlib.util
-import sys
-from pathlib import Path
-
+# bench_core.py — CUDA-event timing, fresh-input-per-iter, 3-seed protocol
 import torch
-import triton
-import triton.language as tl
+try:
+    import triton
+except ImportError:
+    triton = None
 
-from protean.anti_hack import contains_triton_jit
-from protean.task_catalog import OpSpec
+SEED_CORRECT, SEED_TIMED_BASE, SEED_POST = 42, 43, 44
 
+_EAGER_TIME_CACHE = {}
 
-def make_inputs(n: int, dtype: str, seed: int, op: str) -> tuple[torch.Tensor, ...]:
-    if not torch.cuda.is_available():
-        raise RuntimeError("CUDA is required for Protean benchmark verification")
-    torch.manual_seed(seed)
-    torch.cuda.manual_seed_all(seed)
-    torch_dtype = getattr(torch, dtype)
-    x = torch.randn((n,), device="cuda", dtype=torch_dtype)
-    if op == "elementwise_add_relu":
-        y = torch.randn((n,), device="cuda", dtype=torch_dtype)
-        return x, y
-    if op == "rmsnorm":
-        weight = torch.randn((n,), device="cuda", dtype=torch_dtype)
-        return x, weight
-    raise ValueError(f"unknown op: {op}")
-
-
-def eager_elementwise_add_relu(x: torch.Tensor, y: torch.Tensor) -> torch.Tensor:
-    return torch.relu(x + y)
-
-
-def eager_rmsnorm(x: torch.Tensor, weight: torch.Tensor, eps: float = 1e-5) -> torch.Tensor:
-    x_f32 = x.float()
-    rms = torch.rsqrt(torch.mean(x_f32 * x_f32, dim=-1, keepdim=True) + eps)
-    return (x_f32 * rms * weight.float()).to(dtype=x.dtype)
-
-
-def eager_fn_for_op(op: str):
-    if op == "elementwise_add_relu":
-        return eager_elementwise_add_relu
-    if op == "rmsnorm":
-        return eager_rmsnorm
-    raise ValueError(f"unknown op: {op}")
-
-
-def load_solution(src: str):
-    temp_dir = Path(tempfile.gettempdir()) / "protean_candidates"
-    temp_dir.mkdir(parents=True, exist_ok=True)
-    path = temp_dir / f"candidate_{uuid.uuid4().hex}.py"
-    path.write_text(src)
-    name = f"protean_candidate_{path.stem}"
-    spec = importlib.util.spec_from_file_location(name, path)
-    if spec is None or spec.loader is None:
-        raise ValueError("could not import candidate source")
-    module = importlib.util.module_from_spec(spec)
-    module.__dict__.update({"torch": torch, "triton": triton, "tl": tl})
-    sys.modules[name] = module
-    spec.loader.exec_module(module)
-    if "solution" not in module.__dict__:
-        raise ValueError("candidate must define solution(...)")
-    return module
-
-
-def _time_cuda(fn, args: tuple[torch.Tensor, ...], reps: int, warmup: int) -> float:
-    times: list[float] = []
-    flush = torch.empty((16 * 1024 * 1024,), dtype=torch.int8, device="cuda")
-
-    for i in range(warmup + reps):
-        flush.zero_()
-        start = torch.cuda.Event(enable_timing=True)
-        end = torch.cuda.Event(enable_timing=True)
-        start.record()
-        fn(*args)
-        end.record()
+def _cached_eager_time(op_ref, make_inputs, shape, dtype):
+    key = (op_ref.__name__ if hasattr(op_ref, "__name__") else str(op_ref), tuple(shape), str(dtype))
+    if key in _EAGER_TIME_CACHE:
+        return _EAGER_TIME_CACHE[key]
+        
+    # Warmup reference
+    xs = make_inputs(shape, seed=42, dtype=dtype)
+    for _ in range(10):
+        op_ref(*xs)
+    torch.cuda.synchronize()
+    
+    times = []
+    for i in range(50):
+        xs = make_inputs(shape, seed=100 + i, dtype=dtype)
+        s, e = torch.cuda.Event(True), torch.cuda.Event(True)
+        s.record()
+        op_ref(*xs)
+        e.record()
         torch.cuda.synchronize()
-        if i >= warmup:
-            times.append(start.elapsed_time(end))
-
-    return statistics.median(times)
-
+        times.append(s.elapsed_time(e))
+    times.sort()
+    med_time = times[len(times) // 2]
+    _EAGER_TIME_CACHE[key] = med_time
+    return med_time
 
 @torch.no_grad()
-def bench_source(
-    src: str,
-    *,
-    n: int,
-    split: str,
-    spec: OpSpec,
-    reps: int = 50,
-    warmup: int = 10,
-) -> dict:
-    module = load_solution(src)
-    solution = module.solution
-    eager_fn = eager_fn_for_op(spec.name)
+def bench_kernel(op_ref, kernel_fn, make_inputs, shape, dtype, reps=100, warmup=25):
+    # ---- correctness pass (pre-timing) ----
+    xs = make_inputs(shape, seed=SEED_CORRECT, dtype=dtype)
+    out_k = kernel_fn(*xs); out_r = op_ref(*xs)
+    correct = torch.allclose(out_k, out_r, rtol=1e-2, atol=1e-2)
+    dtype_ok = (out_k.dtype == out_r.dtype)
+    shape_ok = (tuple(out_k.shape) == tuple(out_r.shape))
 
-    inputs = make_inputs(n, spec.dtype, seed=42, op=spec.name)
-    out_candidate = solution(*inputs)
-    out_ref = eager_fn(*inputs)
-    dtype_ok = out_candidate.dtype == out_ref.dtype
-    shape_ok = tuple(out_candidate.shape) == tuple(out_ref.shape)
-    correct_pre = False
-    if dtype_ok and shape_ok:
-        correct_pre = torch.allclose(out_candidate, out_ref, rtol=spec.rtol, atol=spec.atol)
+    # ---- eager baseline (cache per (op,shape) — do NOT re-time every rollout) ----
+    t_eager = _cached_eager_time(op_ref, make_inputs, shape, dtype)
 
-    eager_args = make_inputs(n, spec.dtype, seed=43, op=spec.name)
-    candidate_args = tuple(t.clone() for t in eager_args)
-    t_eager_ms = _time_cuda(eager_fn, eager_args, reps=reps, warmup=warmup)
-    t_kernel_ms = _time_cuda(solution, candidate_args, reps=reps, warmup=warmup)
-    launches_timed = reps if contains_triton_jit(src) else 0
+    # ---- timed pass: FRESH random inputs EVERY iter (defeats scratchpad/result cache) ----
+    flush = torch.empty(int(64e6 // 4), dtype=torch.int, device="cuda")  # L2 flush buffer
+    times = []
+    for i in range(warmup + reps):
+        inp = make_inputs(shape, seed=SEED_TIMED_BASE + i, dtype=dtype)
+        flush.zero_()                          # L2 flush each iter
+        s, e = torch.cuda.Event(True), torch.cuda.Event(True)
+        s.record(); kernel_fn(*inp); e.record()
+        torch.cuda.synchronize()
+        if i >= warmup:
+            times.append(s.elapsed_time(e))
+    times.sort(); t_kernel = times[len(times)//2]   # median
+    speedup = t_eager / max(t_kernel, 1e-6)
 
-    post_inputs = make_inputs(n, spec.dtype, seed=44, op=spec.name)
-    out_post = solution(*post_inputs)
-    ref_post = eager_fn(*post_inputs)
-    correct_post = False
-    if tuple(out_post.shape) == tuple(ref_post.shape) and out_post.dtype == ref_post.dtype:
-        correct_post = torch.allclose(out_post, ref_post, rtol=spec.rtol, atol=spec.atol)
-    correct = bool(correct_pre and correct_post)
-    speedup = t_eager_ms / max(t_kernel_ms, 1e-9)
+    # ---- post-timing correctness on a THIRD seed materialized AFTER timing ----
+    xp = make_inputs(shape, seed=SEED_POST, dtype=dtype)  # kernel never saw these → no precompute
+    correct_post = torch.allclose(kernel_fn(*xp), op_ref(*xp), rtol=1e-2, atol=1e-2)
 
-    return {
-        "op": spec.name,
-        "shape": n,
-        "split": split,
-        "correct": correct,
-        "dtype_ok": dtype_ok,
-        "shape_ok": shape_ok,
-        "speedup": speedup,
-        "t_eager_ms": t_eager_ms,
-        "t_kernel_ms": t_kernel_ms,
-        "launches_timed": launches_timed,
-    }
+    # ---- PR measurement ----
+    try:
+        pr_frac = measure_pr_frac(kernel_fn, make_inputs, shape, dtype, n_iters=10)
+    except Exception as e:
+        print(f"[protean] PR measurement failed: {type(e).__name__}: {e}, defaulting to 0.5")
+        pr_frac = 0.5
+
+    return dict(
+        correct=(correct and correct_post),
+        dtype_ok=dtype_ok,
+        shape_ok=shape_ok,
+        speedup=speedup,
+        t_eager=t_eager,
+        t_kernel=t_kernel,
+        pr_frac=pr_frac,
+    )
+
+def _compute_ratio_from_events(events) -> float:
+    """Helper to compute the profiling ratio from profiler events."""
+    triton_us = 0
+    total_us = 0
+    for event in events:
+        dur = getattr(event, "self_cuda_time_total", None)
+        if dur is None:
+            dur = getattr(event, "cuda_time_total", 0)
+        if dur <= 0:
+            continue
+        total_us += dur
+        key = (event.key or "").lower()
+        if "triton" in key or key.startswith("kernel_") or "jit" in key:
+            triton_us += dur
+            
+    if total_us <= 0:
+        return 0.0
+    ratio = triton_us / total_us
+    return max(0.0, min(1.0, ratio))
+
+@torch.no_grad()
+def measure_pr_frac(kernel_fn, make_inputs, shape, dtype, n_iters: int = 10) -> float:
+    """Measure the profiling ratio: time inside Triton kernels / total GPU time.
+    
+    Wraps the kernel function in torch.profiler over several iterations and
+    computes the ratio of cumulative Triton CUDA kernel time to total CUDA
+    device time. Used as an additive reward bonus (daVinci-LITE, plan §5).
+    
+    Returns a float in [0, 1]. Returns 0.0 if no CUDA activity is recorded
+    (e.g. the kernel never launched), 1.0 if Triton time equals total time.
+    """
+    from torch.profiler import profile, ProfilerActivity
+    
+    # Warmup outside the profiler so JIT compile isn't counted.
+    warm_inp = make_inputs(shape, seed=99, dtype=dtype)
+    for _ in range(3):
+        kernel_fn(*warm_inp)
+    torch.cuda.synchronize()
+    
+    with profile(
+        activities=[ProfilerActivity.CUDA],
+        record_shapes=False,
+    ) as prof:
+        for i in range(n_iters):
+            inp = make_inputs(shape, seed=200 + i, dtype=dtype)
+            kernel_fn(*inp)
+        torch.cuda.synchronize()
+        
+    return _compute_ratio_from_events(prof.key_averages())
+

@@ -1,51 +1,27 @@
-"""Task catalog for the verifier-first MVP.
+"""The frozen registry of ~5 fixed fused ops Protean trains on.
 
-The first submission target is deliberately narrow: one fused op with a real
-reference, a known-good Triton implementation, and train/held-out shapes.
+See docs/IMPLEMENTATION_PLAN.md §4.1 / §4.6. Each OpSpec binds an eager reference,
+dtype, allclose tolerances, and the speedup target/floor used by rewards.py.
 """
-
-from __future__ import annotations
-
+from __future__ import annotations  # NOTE: keep OUT of env.py (it breaks @env.template typed params) — fine here.
 from dataclasses import dataclass
 
 
 @dataclass(frozen=True)
 class OpSpec:
-    name: str
-    dtype: str
+    op_name: str
+    reference_module: str   # dotted path to hidden donotaccess/reference.py providing eager_fn(*tensors)
+    dtype: str              # e.g. "float16"
     rtol: float
     atol: float
-    p_target: float
-    speedup_floor: float
-    prompt_path: str
+    p_target: float         # speedup at which the speedup-reward saturates (=1.0). plan: P_TARGET≈1.5
+    speedup_floor: float    # below this, treat as no speedup. plan: 1.1
+    prompt_path: str        # tasks/<op>/prompt.md
 
 
-OPS = (
-    OpSpec(
-        name="elementwise_add_relu",
-        dtype="float16",
-        rtol=1e-2,
-        atol=1e-2,
-        p_target=1.5,
-        speedup_floor=1.1,
-        prompt_path="src/protean/tasks/elementwise_add_relu/prompt.md",
-    ),
-    OpSpec(
-        name="rmsnorm",
-        dtype="float16",
-        rtol=1e-2,
-        atol=1e-2,
-        p_target=1.2,
-        speedup_floor=1.05,
-        prompt_path="src/protean/tasks/rmsnorm/prompt.md",
-    ),
-)
+OPS = [
+    OpSpec("elementwise_add_relu", "protean.tasks.elementwise_add_relu.donotaccess.reference",
+           "float16", 1e-2, 1e-2, 1.5, 1.1, "tasks/elementwise_add_relu/prompt.md"),
+]
 
-OPS_BY_NAME = {op.name: op for op in OPS}
-
-
-def get_op(name: str) -> OpSpec:
-    try:
-        return OPS_BY_NAME[name]
-    except KeyError as exc:
-        raise ValueError(f"unknown op: {name}") from exc
+OPS_BY_NAME = {o.op_name: o for o in OPS}

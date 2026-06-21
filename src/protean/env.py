@@ -1,156 +1,61 @@
-"""HUD public wrapper around the direct Protean verifier."""
+"""Protean — stub extracted from docs/IMPLEMENTATION_PLAN.md (section 4). Fill in TODOs to implement."""
 
-from __future__ import annotations
+import os
+import sys
+from hud import Environment
+from hud.environment import Workspace
+from .scenario_helpers import WORKSPACE_ROOT, setup_task, _resolve_workspace_root
+from .task_catalog import OPS_BY_NAME
+from .grader import evaluate_kernel
 
-import json
-from pathlib import Path
-from typing import Any
+AGENT_UID = int(os.environ.get("AGENT_UID", "1000"))
+AGENT_GID = int(os.environ.get("AGENT_GID", "1000"))
 
-from protean.grader import grade_source, to_eval_result
-from protean.splits import shapes_for_split
-from protean.task_catalog import get_op
+class _KernelWorkspace(Workspace):
+    # demote agent shell so it cannot read the root:700 hidden grader/reference
+    def shell_argv(self, command=None, *, cwd=None, env=None) -> list[str]:
+        argv = super().shell_argv(command, cwd=cwd, env=env)
+        if sys.platform != "win32" and getattr(os, "geteuid", lambda: 1)() == 0:
+            argv = ["setpriv", "--reuid", str(AGENT_UID), "--regid", str(AGENT_GID), "--clear-groups", "--", *argv]
+        return argv
 
-try:
-    from hud import Environment
-except Exception:  # pragma: no cover - local tests should not require HUD.
-    Environment = None
-
-
-HUD_TASKS = (
-    {"id": "elementwise_add_relu_train", "op": "elementwise_add_relu", "split": "train"},
-    {"id": "elementwise_add_relu_held_out", "op": "elementwise_add_relu", "split": "held_out"},
-    {"id": "rmsnorm_train", "op": "rmsnorm", "split": "train"},
-    {"id": "rmsnorm_held_out", "op": "rmsnorm", "split": "held_out"},
+env = Environment(name="protean")
+_ws = _KernelWorkspace(
+    WORKSPACE_ROOT, 
+    network=False,
+    env={"HOME": "/home/agent", "USER": "agent", "TRITON_CACHE_DIR": "/triton-cache"}
 )
 
+@env.initialize
+async def _up(): 
+    await _ws.start()
+    env.add_capability(_ws.capability("shell"))
 
-def _read_prompt(op: str) -> str:
-    spec = get_op(op)
-    path = Path(__file__).resolve().parents[2] / spec.prompt_path
-    return path.read_text()
+@env.shutdown
+async def _down(): 
+    await _ws.stop()
 
+@env.template(id="kernel_opt")
+async def kernel_opt(op_name: str, split: str = "train", seed: int = 0, validate_mode: str | None = None):
+    # setup the task workspace
+    setup_meta = setup_task(op_name, split=split, seed=seed, validate_mode=validate_mode)
+    op_spec = OPS_BY_NAME[op_name]
+    
+    # Expose prompt to agent
+    prompt_path = os.path.join(os.path.dirname(__file__), op_spec.prompt_path)
+    if os.path.exists(prompt_path):
+        with open(prompt_path, "r", encoding="utf-8") as f:
+            prompt = f.read()
+    else:
+        prompt = f"Optimize the {op_name} kernel on shape split {split}."
 
-def hud_prompt(op: str, split: str, shape: int | None = None) -> str:
-    shape = shape or shapes_for_split(split)[0]
-    return (
-        _read_prompt(op)
-        + "\n\n"
-        + "HUD grading metadata:\n"
-        + f"- op: {op}\n"
-        + f"- split: {split}\n"
-        + f"- shape: {shape}\n"
-        + "- reward info includes correctness, speedup, eager timing, kernel timing, and anti-hack caps.\n"
-    )
-
-
-def grade_hud_source(source: str, *, op: str, split: str, shape: int | None = None) -> dict[str, Any]:
-    shape = shape or shapes_for_split(split)[0]
-    grade = grade_source(source or "", op=op, split=split, shape=shape)
-    return {
-        **grade,
-        "hud": {
-            "task_id": f"{op}_{split}",
-            "op": op,
-            "split": split,
-            "shape": shape,
-            "reward": grade["reward"],
-            "correct": grade["correct"],
-            "speedup": grade["speedup"],
-            "t_eager_ms": grade["t_eager_ms"],
-            "t_kernel_ms": grade["t_kernel_ms"],
-            "caps": grade["caps"],
-        },
-    }
-
-
-def task_metadata() -> list[dict[str, Any]]:
-    rows = []
-    for task in HUD_TASKS:
-        split = task["split"]
-        rows.append(
-            {
-                **task,
-                "shape": shapes_for_split(split)[0],
-                "prompt_path": get_op(task["op"]).prompt_path,
-            }
-        )
-    return rows
-
-
-def _make_env():
-    if Environment is None:
-        return None
-    try:
-        return Environment(name="protean")
-    except TypeError:  # pragma: no cover - compatibility with older local HUD builds.
-        return Environment(id="protean")
-
-
-env = _make_env()
-
-
-def _template(template_id: str):
-    try:
-        return env.template(id=template_id)
-    except TypeError:  # pragma: no cover - compatibility with older local HUD builds.
-        return env.template(name=template_id)
-
-
-if env is not None:
-
-    @_template("elementwise_add_relu")
-    async def elementwise_add_relu(split: str = "train", shape: int | None = None):
-        get_op("elementwise_add_relu")
-        source = yield hud_prompt("elementwise_add_relu", split, shape)
-        yield to_eval_result(grade_hud_source(source or "", op="elementwise_add_relu", split=split, shape=shape))
-
-    @_template("rmsnorm")
-    async def rmsnorm(split: str = "train", shape: int | None = None):
-        get_op("rmsnorm")
-        source = yield hud_prompt("rmsnorm", split, shape)
-        yield to_eval_result(grade_hud_source(source or "", op="rmsnorm", split=split, shape=shape))
-
-    elementwise_add_relu_train = elementwise_add_relu(split="train")
-    elementwise_add_relu_train.slug = "elementwise_add_relu_train"
-    elementwise_add_relu_train.columns = {"op": "elementwise_add_relu", "split": "train"}
-
-    elementwise_add_relu_held_out = elementwise_add_relu(split="held_out")
-    elementwise_add_relu_held_out.slug = "elementwise_add_relu_held_out"
-    elementwise_add_relu_held_out.columns = {"op": "elementwise_add_relu", "split": "held_out"}
-
-    rmsnorm_train = rmsnorm(split="train")
-    rmsnorm_train.slug = "rmsnorm_train"
-    rmsnorm_train.columns = {"op": "rmsnorm", "split": "train"}
-
-    rmsnorm_held_out = rmsnorm(split="held_out")
-    rmsnorm_held_out.slug = "rmsnorm_held_out"
-    rmsnorm_held_out.columns = {"op": "rmsnorm", "split": "held_out"}
-else:
-    elementwise_add_relu = {"id": "elementwise_add_relu", "op": "elementwise_add_relu"}
-    rmsnorm = {"id": "rmsnorm", "op": "rmsnorm"}
-    for _task_def in HUD_TASKS:
-        globals()[_task_def["id"]] = dict(_task_def)
-
-
-# Backward-compatible metadata alias used by older imports. Keep it non-Task so
-# HUD task discovery does not count it as a duplicate public task.
-kernel_opt = {"id": "elementwise_add_relu_train", "op": "elementwise_add_relu", "split": "train"}
-
-
-def main() -> int:
-    print(
-        json.dumps(
-            {
-                "env_id": "protean",
-                "hud_available": env is not None,
-                "tasks": task_metadata(),
-            },
-            indent=2,
-            sort_keys=True,
-        )
-    )
-    return 0
-
-
-if __name__ == "__main__":
-    raise SystemExit(main())
+    answer = yield prompt
+    
+    # Grade the solution
+    evaluation = evaluate_kernel(op_name=op_name, split=split, seed=seed)
+    info = dict(evaluation.info or {})
+    info["setup"] = setup_meta
+    info["final_answer"] = None if answer is None else str(answer)
+    evaluation.info = info
+    
+    yield evaluation
