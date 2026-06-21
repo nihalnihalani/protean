@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any
 
 from protean.grader import grade_source, to_eval_result
-from protean.splits import Split, shapes_for_split
+from protean.splits import shapes_for_split
 from protean.task_catalog import get_op
 
 try:
@@ -30,7 +30,7 @@ def _read_prompt(op: str) -> str:
     return path.read_text()
 
 
-def hud_prompt(op: str, split: Split, shape: int | None = None) -> str:
+def hud_prompt(op: str, split: str, shape: int | None = None) -> str:
     shape = shape or shapes_for_split(split)[0]
     return (
         _read_prompt(op)
@@ -43,7 +43,7 @@ def hud_prompt(op: str, split: Split, shape: int | None = None) -> str:
     )
 
 
-def grade_hud_source(source: str, *, op: str, split: Split, shape: int | None = None) -> dict[str, Any]:
+def grade_hud_source(source: str, *, op: str, split: str, shape: int | None = None) -> dict[str, Any]:
     shape = shape or shapes_for_split(split)[0]
     grade = grade_source(source or "", op=op, split=split, shape=shape)
     return {
@@ -99,13 +99,13 @@ def _template(template_id: str):
 if env is not None:
 
     @_template("elementwise_add_relu")
-    async def elementwise_add_relu(split: Split = "train", shape: int | None = None):
+    async def elementwise_add_relu(split: str = "train", shape: int | None = None):
         get_op("elementwise_add_relu")
         source = yield hud_prompt("elementwise_add_relu", split, shape)
         yield to_eval_result(grade_hud_source(source or "", op="elementwise_add_relu", split=split, shape=shape))
 
     @_template("rmsnorm")
-    async def rmsnorm(split: Split = "train", shape: int | None = None):
+    async def rmsnorm(split: str = "train", shape: int | None = None):
         get_op("rmsnorm")
         source = yield hud_prompt("rmsnorm", split, shape)
         yield to_eval_result(grade_hud_source(source or "", op="rmsnorm", split=split, shape=shape))
