@@ -6,9 +6,32 @@
 
 **An RL environment + overnight optimizer that trains models to write GPU kernels which stay fast on tensor shapes they have never seen — graded by a verifier you can't fake.**
 
-🌐 **Live dashboard:** [protean-khaki.vercel.app](https://protean-khaki.vercel.app) · 🔁 **HUD env** · 💻 **[GitHub](https://github.com/nihalnihalani/protean)**
+<br/>
 
-*HUD × YC Frontier RL Environments Hackathon · Track: ML Research (GPU)*
+[![Live Dashboard](https://img.shields.io/badge/live_dashboard-protean--khaki.vercel.app-7C3AED?style=for-the-badge&logo=vercel&logoColor=white)](https://protean-khaki.vercel.app)
+[![GitHub](https://img.shields.io/badge/source-nihalnihalani%2Fprotean-181717?style=for-the-badge&logo=github&logoColor=white)](https://github.com/nihalnihalani/protean)
+
+<br/>
+
+![Best speedup 4.62×](https://img.shields.io/badge/best_speedup-4.62×_vs_PyTorch-00C853?style=flat-square)
+![Hardware B200](https://img.shields.io/badge/GPU-NVIDIA_B200-76B900?style=flat-square&logo=nvidia&logoColor=white)
+![Tests](https://img.shields.io/badge/tests-368_passed-2EA043?style=flat-square&logo=pytest&logoColor=white)
+![mypy](https://img.shields.io/badge/mypy-0_errors-2EA043?style=flat-square)
+![ruff](https://img.shields.io/badge/lint-ruff_clean-D7FF64?style=flat-square&logo=ruff&logoColor=black)
+![coverage](https://img.shields.io/badge/coverage-73%25+-brightgreen?style=flat-square)
+![HUD depth](https://img.shields.io/badge/HUD_integration-~4%2F5-FF6F00?style=flat-square)
+
+![Python](https://img.shields.io/badge/python-3.11_|_3.12-3776AB?style=flat-square&logo=python&logoColor=white)
+![Triton](https://img.shields.io/badge/kernels-Triton-EE4C2C?style=flat-square&logo=pytorch&logoColor=white)
+![HUD](https://img.shields.io/badge/platform-HUD_RL_env-000000?style=flat-square)
+![Modal](https://img.shields.io/badge/compute-Modal-7B61FF?style=flat-square)
+![Fireworks](https://img.shields.io/badge/edits-Fireworks-FF5A1F?style=flat-square)
+![CI](https://img.shields.io/badge/CI-lockfile_·_test_·_lint_·_typecheck_·_coverage_·_audit-22272E?style=flat-square&logo=githubactions&logoColor=white)
+![License](https://img.shields.io/badge/license-MIT-blue?style=flat-square)
+
+**🏆 HUD × YC Frontier RL Environments Hackathon — Track: ML Research (GPU)**
+
+[Live Demo](https://protean-khaki.vercel.app) · [TL;DR](#-tldr) · [How it works](#️-how-it-works) · [Verifier](#️-the-verifier-you-can-trust) · [Eval](#-evaluation-rigor-no-hand-waving) · [HUD](#-hud-integration) · [Quickstart](#-quickstart) · [Roadmap](#️-honest-status--roadmap)
 
 </div>
 
