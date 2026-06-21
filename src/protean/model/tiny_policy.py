@@ -76,6 +76,59 @@ def state_features(state: dict | list | tuple) -> list[float]:
     ]
 
 
+def trloo_advantages(examples: list["TraceExample"]) -> list[float]:
+    """TRLOO leave-one-out advantages, grouped by action.
+
+    For each example, the baseline is the mean of the OTHER same-action
+    advantages (Dr. Kernel arXiv:2602.05885 §3.3; Kevin arXiv:2507.11948).
+    For a same-action group of size N > 1 this equals
+    ``(N / (N - 1)) * (G_i - group_mean)``. Single-example groups degrade to
+    the raw advantage (no other sample to baseline against). The corrected
+    advantages are then batch-normalized (zero mean, unit std with a 1e-8
+    floor) so the policy-gradient scale is stable across training runs.
+
+    Normalization uses population variance (the ``len(corrected)`` denominator),
+    which is the correct choice when standardizing over the *full* training
+    batch rather than estimating the variance of a sample drawn from a larger
+    population: the batch IS the population for this gradient step. This matches
+    the standard REINFORCE/GRPO batch-normalization convention.
+
+    Degenerate cases are intentional, total, and safe (never raise):
+      * Empty input returns an empty list.
+      * A single-example batch normalizes to ``[0.0]`` (the value minus its own
+        mean is 0). This yields a zero policy gradient, so a one-example batch
+        is effectively a training no-op -- see ``TinyPolicyHead.train``.
+      * When every corrected advantage is identical (e.g. all trials returned
+        the same reward), the variance is 0, the 1e-8 std floor fires, and all
+        outputs are 0.0. The policy does not move, which is the desired
+        behavior: an undifferentiated batch carries no learning signal.
+    """
+
+    by_action: dict[int, list[int]] = {}
+    for idx, example in enumerate(examples):
+        by_action.setdefault(example.action, []).append(idx)
+
+    corrected = [0.0] * len(examples)
+    for indices in by_action.values():
+        group = [examples[i].advantage for i in indices]
+        n = len(group)
+        total = sum(group)
+        for i in indices:
+            g_i = examples[i].advantage
+            if n > 1:
+                baseline = (total - g_i) / (n - 1)
+                corrected[i] = g_i - baseline
+            else:
+                corrected[i] = g_i
+
+    if not corrected:
+        return corrected
+    mean = sum(corrected) / len(corrected)
+    var = sum((value - mean) ** 2 for value in corrected) / len(corrected)
+    std = max(math.sqrt(var), 1e-8)
+    return [(value - mean) / std for value in corrected]
+
+
 def advantage_from_delta(delta: dict) -> float:
     return (
         float(delta.get("held_out_speedup", 0.0))
@@ -142,11 +195,35 @@ class TinyPolicyHead:
         return sorted(range(len(probs)), key=lambda idx: probs[idx], reverse=True)
 
     def train(self, examples: list[TraceExample], *, epochs: int = 200, lr: float = 0.05) -> dict:
+        """Fit the policy head with offline batch policy gradient.
+
+        This is OFFLINE batch RL, not on-policy REINFORCE: the per-example
+        advantages are computed once from the (fixed) trace ``advantage`` fields
+        via ``trloo_advantages`` *before* the epoch loop, so the baseline does
+        not adapt as the policy updates. The gradient form is REINFORCE-style
+        (positive advantage raises the chosen action's log-prob, negative lowers
+        it), but the advantages are pre-computed labels, not freshly sampled
+        returns.
+
+        Degenerate note: a single-example batch (or any batch whose corrected
+        advantages are all identical) normalizes to all-zero advantages and is
+        therefore a training no-op -- no weight update moves the policy. This is
+        intentional (see ``trloo_advantages``); supply at least two
+        differentiated examples for the policy to learn.
+        """
+
         if not examples:
             raise ValueError("no trace examples to train on")
 
+        # TRLOO leave-one-out advantages: baseline each example against the
+        # mean of the OTHER same-action advantages, then batch-normalize. This
+        # reduces gradient variance versus using the raw per-example advantage.
+        # Computed once (offline batch RL): advantages are fixed labels, not
+        # recomputed per epoch as the policy moves.
+        advantages = trloo_advantages(examples)
+
         for _ in range(epochs):
-            for example in examples:
+            for example, advantage in zip(examples, advantages):
                 hidden, logits = self._forward(example.features)
                 offset = max(logits)
                 exp_values = [math.exp(value - offset) for value in logits]
@@ -155,8 +232,8 @@ class TinyPolicyHead:
 
                 # REINFORCE-style objective: positive advantages increase the
                 # action probability; negative advantages decrease it.
-                grad_logits = [example.advantage * prob for prob in probs]
-                grad_logits[example.action] -= example.advantage
+                grad_logits = [advantage * prob for prob in probs]
+                grad_logits[example.action] -= advantage
 
                 old_w2 = [row[:] for row in self.w2]
                 for action in range(self.action_dim):

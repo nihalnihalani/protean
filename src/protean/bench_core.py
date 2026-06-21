@@ -20,8 +20,18 @@ except Exception:  # pragma: no cover - CPU-only unit tests can still import hel
     triton = None
     tl = None
 
-from protean.anti_hack import contains_triton_jit
+from protean.anti_hack import (
+    contains_triton_jit,
+    install_audit_hook,
+)
+from protean.anti_hack import _audit_import_hook as _audit_import_hook  # re-export
 from protean.task_catalog import OpSpec
+
+# The PEP 578 import audit hook lives in anti_hack and is armed lazily by
+# load_solution (NOT at module-import time) -- see install_audit_hook's docstring
+# for why a stdlib-root-banning hook cannot be installed during interpreter
+# bootstrap. The _audit_import_hook re-export above preserves
+# bench_core._audit_import_hook for callers/tests that reference it on this module.
 
 
 def _ensure_triton_cache_dir() -> None:
@@ -103,14 +113,33 @@ def load_solution(src: str):
     name = f"protean_candidate_{path.stem}"
     spec = importlib.util.spec_from_file_location(name, path)
     if spec is None or spec.loader is None:
+        path.unlink(missing_ok=True)
         raise ValueError("could not import candidate source")
     module = importlib.util.module_from_spec(spec)
     module.__dict__.update({"torch": torch, "triton": triton, "tl": tl})
     sys.modules[name] = module
-    spec.loader.exec_module(module)
-    if "solution" not in module.__dict__:
-        raise ValueError("candidate must define solution(...)")
-    return module
+    # Arm the import audit-hook backstop immediately before executing untrusted
+    # candidate source. This is the single chokepoint where candidate code runs,
+    # so installing here guarantees the hook is active for every exec_module while
+    # avoiding the interpreter-bootstrap crash a process-wide eager install causes
+    # (stdlib lazily imports importlib.machinery/os, which the hook would block).
+    install_audit_hook()
+    try:
+        spec.loader.exec_module(module)
+        if "solution" not in module.__dict__:
+            raise ValueError("candidate must define solution(...)")
+        return module
+    finally:
+        # Tombstone the candidate so its module name, monkey-patches, and globals
+        # cannot survive into the next evaluation round, and remove its temp file
+        # so the candidate directory does not accumulate untrusted source. The
+        # returned module object stays alive via the caller's reference and its
+        # compiled functions remain callable; only the sys.modules registration
+        # and on-disk file are removed. Source: SOL-ExecBench arXiv:2603.19173
+        # (state-caching family); CPython importlib docs; IMPROVEMENT_RESEARCH.md
+        # item #4.
+        sys.modules.pop(name, None)
+        path.unlink(missing_ok=True)
 
 
 class _TritonLaunchCounter:
@@ -355,6 +384,26 @@ def _time_cuda_graph_raw(
         return None
 
 
+def _is_strict_tensor(out) -> bool:
+    """True only if ``out`` is *exactly* torch.Tensor, not a subclass.
+
+    Uses ``type(x) is torch.Tensor`` (identity), NOT isinstance, because a
+    FakeTensor / meta tensor / custom tensor subclass passes isinstance but is
+    never executed on the GPU -- it can fabricate a shape/dtype-matching object
+    that defeats correctness and timing without doing real work. Returning a
+    non-tensor (tuple, ndarray, Python scalar) is likewise rejected.
+    Source: SOL-ExecBench arXiv:2603.19173 Table 3 (FakeTensor family);
+    IMPROVEMENT_RESEARCH.md item #4.
+    """
+    tensor_cls = getattr(torch, "Tensor", None)
+    if tensor_cls is None:
+        # torch is unavailable or a test double without a real Tensor class; the
+        # identity gate cannot run, so do not reject (bench_source's CUDA path,
+        # which is where this matters, always has the real torch module).
+        return True
+    return type(out) is tensor_cls
+
+
 def _check_correct_multi_init(
     solution,
     eager_fn,
@@ -375,6 +424,8 @@ def _check_correct_multi_init(
         inputs = make_inputs(n, spec.dtype, seed=s, op=spec.name)
         out = solution(*inputs)
         ref = eager_fn(*inputs)
+        if not _is_strict_tensor(out):
+            return False
         if out.dtype != ref.dtype:
             return False
         if tuple(out.shape) != tuple(ref.shape):
@@ -435,8 +486,42 @@ def bench_source(
     solution = module.solution
     eager_fn = eager_fn_for_op(spec.name)
 
+    def _non_tensor_result() -> dict:
+        """Synthetic bench dict for a candidate that did not return a real
+        torch.Tensor (FakeTensor / meta / subclass / non-tensor). We return
+        early WITHOUT timing it: a fake tensor must never enter the timing loop
+        where it could fabricate a speedup."""
+        return {
+            "op": spec.name,
+            "shape": n,
+            "split": split,
+            "correct": False,
+            "multi_init_ok": False,
+            "dtype_ok": False,
+            "shape_ok": False,
+            "speedup": 0.0,
+            "speedup_ci_p05": 0.0,
+            "speedup_ci_p95": 0.0,
+            "speedup_graph": None,
+            "t_eager_ms": 0.0,
+            "t_kernel_ms": 0.0,
+            "t_kernel_graph_ms": None,
+            "t_eager_cv": 0.0,
+            "t_kernel_cv": 0.0,
+            "timing_eager": _timing_stats([]),
+            "timing_kernel": _timing_stats([]),
+            "launches_timed": 0,
+            "pr_frac": 0.0,
+            "caps": ["non_tensor_output"],
+            "caps_advisory": [],
+        }
+
     inputs = make_inputs(n, spec.dtype, seed=42, op=spec.name)
     out_candidate = solution(*inputs)
+    # Strict tensor-subclass identity gate: a FakeTensor/meta/subclass output
+    # passes isinstance but never ran on the GPU. Reject before any timing.
+    if not _is_strict_tensor(out_candidate):
+        return _non_tensor_result()
     out_ref = eager_fn(*inputs)
     dtype_ok = out_candidate.dtype == out_ref.dtype
     shape_ok = tuple(out_candidate.shape) == tuple(out_ref.shape)
@@ -473,6 +558,10 @@ def bench_source(
 
     post_inputs = make_inputs(n, spec.dtype, seed=44, op=spec.name)
     out_post = solution(*post_inputs)
+    # Re-apply the strict identity gate on the post-trial output: a candidate
+    # could return a real tensor on the first call and a FakeTensor later.
+    if not _is_strict_tensor(out_post):
+        return _non_tensor_result()
     ref_post = eager_fn(*post_inputs)
     correct_post = False
     if tuple(out_post.shape) == tuple(ref_post.shape) and out_post.dtype == ref_post.dtype:

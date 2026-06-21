@@ -1,0 +1,20 @@
+{
+  "content_sha256": "a5771e24f78b44d3a3406fb13e6342cdede382b8a634a56177a5db25ef666ed1",
+  "n_per_split": 12,
+  "n_rows": 72,
+  "ops": [
+    "elementwise_add_relu",
+    "rmsnorm",
+    "softmax_rows"
+  ],
+  "provenance": {
+    "bootstrap": true,
+    "created_at": null,
+    "generator": "committed (pinned manifest_v1.jsonl)",
+    "note": "Bootstrap sidecar for the pre-existing committed manifest; integrity fields (schema_version, content_sha256, n_rows) reflect the on-disk file. Runtime provenance is intentionally null because no live freeze() run produced this file (the data file is byte-pinned to MANIFEST_SHA256).",
+    "platform": null,
+    "protean_version": null,
+    "python_version": null
+  },
+  "schema_version": 1
+}

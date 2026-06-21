@@ -37,6 +37,13 @@ class RewardConfig:
     #                      gradient baseline.
     pr_mode: str = "bonus"
     pr_center: float = 0.5
+    # Low-profiling-ratio rejection gate (Dr. Kernel, arXiv:2602.05885 PRS tau).
+    # When pr_frac < pr_frac_gate the kernel is treated as a non-bottleneck
+    # "lazy optimization": it earns zero speedup credit and a "below_pr_gate"
+    # cap. The default of 0.0 is a strict no-op (pr_frac is clamped to [0, 1],
+    # so pr_clamped < 0.0 is never true), preserving all historical values and
+    # the [0, max_reward] bound. Production config sets pr_frac_gate=0.3.
+    pr_frac_gate: float = 0.0
 
 
 DEFAULT_CONFIG = RewardConfig()
@@ -69,6 +76,9 @@ def load_reward_config() -> RewardConfig:
         max_reward=float(data.get("MAX_REWARD", data.get("max_reward", DEFAULT_CONFIG.max_reward))),
         pr_mode=str(data.get("PR_MODE", data.get("pr_mode", DEFAULT_CONFIG.pr_mode))),
         pr_center=float(data.get("PR_CENTER", data.get("pr_center", DEFAULT_CONFIG.pr_center))),
+        pr_frac_gate=float(
+            data.get("PR_FRAC_GATE", data.get("pr_frac_gate", DEFAULT_CONFIG.pr_frac_gate))
+        ),
     )
 
 
@@ -132,6 +142,15 @@ def compute_reward(
 
     pr_clamped = max(0.0, min(float(pr_frac), 1.0))
 
+    # Low-PR rejection gate. A kernel that is not the runtime bottleneck
+    # (pr_clamped below pr_frac_gate) earns no reward, even if correct and
+    # fast: optimizing a non-bottleneck kernel is a lazy exploit of the speedup
+    # term. Default pr_frac_gate=0.0 makes this a no-op (pr_clamped >= 0.0
+    # always), so legacy behavior and the [0, max_reward] bound are preserved.
+    if not hard_failed and config.pr_frac_gate > 0.0 and pr_clamped < config.pr_frac_gate:
+        caps.append("below_pr_gate")
+        hard_failed = True
+
     if not hard_failed and speedup >= config.speedup_floor:
         capped_speedup = max(config.speedup_floor, min(float(speedup), config.speedup_cap))
         denominator = math.log(config.speedup_cap / config.speedup_floor)
@@ -159,6 +178,14 @@ def compute_reward(
     pr_reward = _pr_reward(config, pr_clamped, hard_failed)
     reward = correctness_reward + speedup_reward + pr_reward
     if hard_failed:
+        # A hard failure zeros every reward component, not just the total, so the
+        # returned sub-score breakdown is internally consistent. Without this a
+        # gated-but-correct kernel (e.g. below_pr_gate) would report
+        # correctness_reward=correct_floor alongside reward=0.0, misleading any
+        # dashboard or downstream analysis that sums the sub-scores.
+        correctness_reward = 0.0
+        speedup_reward = 0.0
+        pr_reward = 0.0
         reward = 0.0
 
     # Lower-bound clamp. "centered" mode subtracts pr_bonus*(pr_center-pr_frac)

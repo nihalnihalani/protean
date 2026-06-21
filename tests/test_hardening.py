@@ -454,6 +454,173 @@ def test_launch_count_unverified_advisory_does_not_gate_reward():
     assert grade["caps"] == []
 
 
+# --- Production hardening: expanded import roots, relative-import ban, audit
+# --- hook backstop, strict tensor-subclass identity, sys.modules tombstone -----
+
+
+def _candidate_with_import(import_line: str) -> str:
+    return (
+        "import torch\n"
+        "import triton\n"
+        "import triton.language as tl\n"
+        f"{import_line}\n\n\n"
+        "@triton.jit\n"
+        "def _decoy(x_ptr):\n"
+        "    return\n\n\n"
+        "def solution(x, y):\n"
+        "    return x\n"
+    )
+
+
+@pytest.mark.parametrize(
+    "root",
+    [
+        "threading",
+        "concurrent",
+        "multiprocessing",
+        "_thread",
+        "base64",
+        "binascii",
+        "tempfile",
+        "shutil",
+        "zipfile",
+        "tarfile",
+        "pickle",
+        "shelve",
+    ],
+)
+def test_expanded_banned_import_roots_rejected(root):
+    # Concurrency family hides un-timed GPU work; binary-embedding family decodes
+    # and dlopens a precompiled cubin; pickle/shelve close state-caching. Each new
+    # root must be rejected by the static AST ban via a plain `import <root>`.
+    src = _candidate_with_import(f"import {root}")
+    ok, reason = ast_clean(src)
+    assert ok is False
+    assert reason == f"ast_ban:import:{root}"
+
+
+@pytest.mark.parametrize(
+    "root",
+    ["threading", "base64", "pickle", "concurrent", "multiprocessing"],
+)
+def test_expanded_banned_import_roots_rejected_via_from_import(root):
+    # `from threading import Thread` / `from base64 import b64decode` must also be
+    # caught: the ImportFrom path resolves node.module to the banned root.
+    src = _candidate_with_import(f"from {root} import something")
+    ok, reason = ast_clean(src)
+    assert ok is False
+    assert reason == f"ast_ban:import:{root}"
+
+
+def test_relative_import_banned():
+    # Relative imports are abnormal in self-contained kernel code and could reach
+    # the grader's own package namespace. Reject `from . import x`.
+    src = _candidate_with_import("from . import sibling")
+    ok, reason = ast_clean(src)
+    assert ok is False
+    assert reason == "ast_ban:relative_import"
+
+
+def test_relative_import_with_package_banned():
+    src = _candidate_with_import("from ..protean import rewards")
+    ok, reason = ast_clean(src)
+    assert ok is False
+    assert reason == "ast_ban:relative_import"
+
+
+def test_threading_delegation_rejected_through_grader():
+    src = _candidate_with_import("import threading")
+    grade = grade_source(src)
+    assert grade["reward"] == 0.0
+    assert "ast_ban:import:threading" in grade["caps"]
+
+
+def test_audit_hook_installed_and_blocks_banned_import():
+    # The PEP 578 audit hook is a defense-in-depth backstop for dynamic imports
+    # that slip past static AST analysis. Importing bench_core installs it; the
+    # hook raises ImportError for a banned root. CPU-safe: no CUDA used. We invoke
+    # the hook directly (rather than via `import`) so the assertion does not depend
+    # on whether a banned module happens to be cached from an earlier test, while
+    # still exercising the exact code the interpreter calls on every import event.
+    import sys
+
+    import protean.bench_core as bench_core
+
+    # The hook is armed lazily (at load_solution time) to avoid crashing the
+    # interpreter bootstrap; install it explicitly here so the assertion does not
+    # depend on whether an earlier test happened to call load_solution.
+    bench_core.install_audit_hook()
+    assert getattr(sys, "_protean_audit_hook_installed", False) is True
+    for banned in ("base64", "threading", "pickle", "subprocess"):
+        with pytest.raises(ImportError):
+            bench_core._audit_import_hook("import", (banned, None, None, None))
+    # dotted submodule of a banned module is also blocked
+    with pytest.raises(ImportError):
+        bench_core._audit_import_hook("import", ("torch.nn.functional", None, None, None))
+
+
+def test_audit_hook_allows_safe_import():
+    # The backstop must not block a benign, allowed module, and must ignore
+    # non-import audit events.
+    import protean.bench_core as bench_core
+
+    bench_core._audit_import_hook("import", ("json", None, None, None))
+    bench_core._audit_import_hook("import", ("torch", None, None, None))
+    bench_core._audit_import_hook("open", ("/tmp/x", "r", 0))  # non-import event ignored
+
+
+def test_strict_tensor_identity_rejects_subclass():
+    # type(x) is torch.Tensor must reject a subclass that passes isinstance. We
+    # build a trivial torch.Tensor subclass; no CUDA is required to construct it.
+    torch = pytest.importorskip("torch")
+    import protean.bench_core as bench_core
+
+    class _FakeTensor(torch.Tensor):
+        pass
+
+    real = torch.zeros(2)
+    fake = torch.zeros(2).as_subclass(_FakeTensor)
+    assert bench_core._is_strict_tensor(real) is True
+    assert bench_core._is_strict_tensor(fake) is False
+    assert isinstance(fake, torch.Tensor)  # confirms isinstance would have passed
+
+
+def test_strict_tensor_identity_rejects_non_tensor():
+    pytest.importorskip("torch")
+    import protean.bench_core as bench_core
+
+    assert bench_core._is_strict_tensor([1, 2, 3]) is False
+    assert bench_core._is_strict_tensor(42) is False
+    assert bench_core._is_strict_tensor(None) is False
+
+
+def test_load_solution_tombstones_sys_modules(monkeypatch):
+    # After load_solution returns, the candidate's module name must NOT remain in
+    # sys.modules (so monkey-patches/globals cannot bleed into the next eval) and
+    # its temp file must be removed. CPU-safe: we stub _require_torch and the
+    # torch/triton globals so no CUDA is touched.
+    import sys
+
+    import protean.bench_core as bench_core
+
+    monkeypatch.setattr(bench_core, "_require_torch", lambda: None)
+    monkeypatch.setattr(bench_core, "torch", object())
+    monkeypatch.setattr(bench_core, "triton", object())
+    monkeypatch.setattr(bench_core, "tl", object())
+
+    before = set(sys.modules)
+    src = "def solution(x):\n    return x\n"
+    module = bench_core.load_solution(src)
+    assert module.solution("ok") == "ok"  # compiled function still callable
+
+    new_candidate_names = [
+        name
+        for name in (set(sys.modules) - before)
+        if name.startswith("protean_candidate_")
+    ]
+    assert new_candidate_names == [], "candidate module leaked into sys.modules"
+
+
 def test_legitimate_kernels_have_no_banned_imports():
     from protean.kernels import (
         HAND_OPTIMIZED_ELEMENTWISE_ADD_RELU,
@@ -468,3 +635,151 @@ def test_legitimate_kernels_have_no_banned_imports():
     ):
         ok, reason = ast_clean(src)
         assert ok is True, reason
+
+
+# --- Production hardening round 2: indirect-builtin reconstruction bypasses,
+# --- io/builtins import roots, dotted-leaf dynamic-exec calls (all CPU-only) ---
+
+
+def _candidate_with_body(body_line: str) -> str:
+    return (
+        "import torch\n"
+        "import triton\n"
+        "import triton.language as tl\n\n\n"
+        "@triton.jit\n"
+        "def _decoy(x_ptr):\n"
+        "    return\n\n\n"
+        "def solution(x, y):\n"
+        f"    {body_line}\n"
+        "    return x\n"
+    )
+
+
+@pytest.mark.parametrize(
+    "name",
+    ["setattr", "globals", "locals", "vars", "__class__"],
+)
+def test_indirect_builtin_names_banned(name):
+    # Without these in BANNED_NAMES a candidate can reconstruct any banned builtin
+    # via `globals()["__builtins__"]["__import__"]("os")` or `setattr(...)` and slip
+    # past the AST walk. Each must now be rejected as a bare-name call.
+    src = _candidate_with_body(f"z = {name}()")
+    ok, reason = ast_clean(src)
+    assert ok is False
+    assert reason == f"ast_ban:{name}"
+
+
+def test_globals_builtins_import_chain_banned():
+    # The flagship sandbox-bypass vector. `globals()` is banned as a bare name; the
+    # `["__builtins__"]` subscript is independently banned too. Either gate rejects.
+    src = _candidate_with_body('globals()["__builtins__"]["__import__"]("os")')
+    ok, reason = ast_clean(src)
+    assert ok is False
+    assert reason in ("ast_ban:globals", "ast_ban:builtins_subscript")
+
+
+def test_builtins_subscript_eval_banned():
+    src = _candidate_with_body('__builtins__["eval"]("1+1")')
+    ok, reason = ast_clean(src)
+    assert ok is False
+    assert reason == "ast_ban:builtins_subscript"
+
+
+def test_dunder_dict_subscript_banned():
+    src = _candidate_with_body('torch.__dict__["__loader__"]')
+    ok, reason = ast_clean(src)
+    assert ok is False
+    assert reason == "ast_ban:builtins_subscript"
+
+
+def test_io_import_banned():
+    # `io.open` is `builtins.open`; banning bare `open` without `io` left a direct
+    # read of the hidden grader / reward config reachable.
+    src = _candidate_with_import("import io")
+    ok, reason = ast_clean(src)
+    assert ok is False
+    assert reason == "ast_ban:import:io"
+
+
+def test_io_open_call_leaf_or_import_banned():
+    # `io.open(...)` must be rejected -- either by the import-root ban or, if the
+    # import were somehow hidden, by the io.open BANNED_CALLS entry.
+    src = _candidate_with_body('z = io.open("/donotaccess/rewards.py")')
+    ok, reason = ast_clean(src)
+    assert ok is False
+    assert reason == "ast_ban:io.open"
+
+
+def test_builtins_import_root_banned():
+    src = _candidate_with_import("import builtins")
+    ok, reason = ast_clean(src)
+    assert ok is False
+    assert reason == "ast_ban:import:builtins"
+
+
+def test_from_builtins_import_banned():
+    src = _candidate_with_import("from builtins import __import__")
+    ok, reason = ast_clean(src)
+    assert ok is False
+    assert reason == "ast_ban:import:builtins"
+
+
+def test_builtins_dotted_import_call_banned():
+    # `builtins.__import__("os")` as a dotted call: bare-name BANNED_NAMES cannot
+    # see it (node.func is an Attribute), but the dotted-leaf ban and the
+    # builtins.__import__ prefix catch it.
+    src = _candidate_with_body('z = builtins.__import__("os")')
+    ok, reason = ast_clean(src)
+    assert ok is False
+    assert reason in ("ast_ban:builtins.__import__", "ast_ban:__import__")
+
+
+def test_builtins_getattr_leaf_banned():
+    # `builtins.getattr(x, "y")` reconstructs getattr past the bare-name ban; the
+    # dotted-leaf ban catches getattr/setattr/eval/exec/__import__ regardless of
+    # the receiving object.
+    src = _candidate_with_body('z = builtins.getattr(torch, "relu")')
+    ok, reason = ast_clean(src)
+    assert ok is False
+    assert reason in ("ast_ban:builtins.getattr", "ast_ban:getattr")
+
+
+def test_globals_builtins_chain_rejected_through_grader():
+    src = _candidate_with_body('globals()["__builtins__"]["__import__"]("os")')
+    grade = grade_source(src)
+    assert grade["reward"] == 0.0
+    assert any(cap.startswith("ast_ban") for cap in grade["caps"])
+
+
+def test_io_import_rejected_through_grader():
+    src = _candidate_with_import("import io")
+    grade = grade_source(src)
+    assert grade["reward"] == 0.0
+    assert "ast_ban:import:io" in grade["caps"]
+
+
+def test_audit_hook_blocks_io_and_builtins_roots():
+    # The audit-hook backstop mirrors the expanded import-root set: io and builtins
+    # must be blocked at runtime too, not only statically.
+    import protean.bench_core as bench_core
+
+    for banned in ("io", "builtins"):
+        with pytest.raises(ImportError):
+            bench_core._audit_import_hook("import", (banned, None, None, None))
+
+
+def test_audit_hook_lives_in_anti_hack_and_is_idempotent():
+    # The hook now lives in anti_hack (imported eagerly by grader) and is armed
+    # lazily by install_audit_hook at the load_solution chokepoint -- NOT at module
+    # import, because a stdlib-root-banning hook installed during interpreter
+    # bootstrap would crash on CPython's own importlib.machinery/os imports.
+    # install_audit_hook must be idempotent and the hook must block banned roots.
+    import sys
+
+    import protean.anti_hack as anti_hack
+
+    anti_hack.install_audit_hook()
+    anti_hack.install_audit_hook()  # idempotent: second call is a no-op
+    assert getattr(sys, "_protean_audit_hook_installed", False) is True
+    with pytest.raises(ImportError):
+        anti_hack._audit_import_hook("import", ("subprocess", None, None, None))

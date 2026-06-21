@@ -44,7 +44,7 @@ def test_optimizer_logs_rejected_trial_when_candidate_eval_crashes(tmp_path, mon
 
     calls = {"n": 0}
 
-    def fake_evaluate_kernel(source, *, op, reps, warmup):
+    def fake_evaluate_kernel(source, *, op, reps, warmup, run_id=None):
         calls["n"] += 1
         if calls["n"] == 1:
             return {"rows": [], "correct_held_out": 3, "mean_held_out_speedup": 1.5, "mean_reward": 1.0}
@@ -71,7 +71,7 @@ def test_optimizer_streams_each_trial_to_hud_when_enabled(tmp_path, monkeypatch)
     calls = {"eval": 0, "stream": []}
     session = types.SimpleNamespace(job_url="https://hud.ai/jobs/session-1", name="session-1")
 
-    def fake_evaluate_kernel(source, *, op, reps, warmup):
+    def fake_evaluate_kernel(source, *, op, reps, warmup, run_id=None):
         calls["eval"] += 1
         if calls["eval"] == 1:
             return {"rows": [], "correct_held_out": 3, "mean_held_out_speedup": 1.5, "mean_reward": 1.0}
@@ -118,7 +118,7 @@ def test_optimizer_logs_hud_stream_error_without_killing_trial(tmp_path, monkeyp
     calls = {"eval": 0}
     session = types.SimpleNamespace(job_url="https://hud.ai/jobs/session-1", name="session-1")
 
-    def fake_evaluate_kernel(source, *, op, reps, warmup):
+    def fake_evaluate_kernel(source, *, op, reps, warmup, run_id=None):
         calls["eval"] += 1
         if calls["eval"] == 1:
             return {"rows": [], "correct_held_out": 3, "mean_held_out_speedup": 1.5, "mean_reward": 1.0}
@@ -279,7 +279,7 @@ def test_bandit_reward_prefers_held_out_speed():
 def _bandit_fake_eval_factory(calls):
     """Return a fake evaluate_kernel that rewards block_size=512 the most."""
 
-    def fake_evaluate_kernel(source, *, op, reps, warmup):
+    def fake_evaluate_kernel(source, *, op, reps, warmup, run_id=None):
         calls["n"] += 1
         if calls["n"] == 1:
             # Seed evaluation.
@@ -321,7 +321,7 @@ def test_bandit_anytime_stopping_halts_after_patience(tmp_path, monkeypatch):
 
     calls = {"n": 0}
 
-    def fake_evaluate_kernel(source, *, op, reps, warmup):
+    def fake_evaluate_kernel(source, *, op, reps, warmup, run_id=None):
         calls["n"] += 1
         # Seed is strong; nothing ever improves on it, so no round improves.
         if calls["n"] == 1:
@@ -355,7 +355,7 @@ def test_bandit_patience_does_not_truncate_non_bandit_policies(tmp_path, monkeyp
 
     calls = {"n": 0}
 
-    def fake_evaluate_kernel(source, *, op, reps, warmup):
+    def fake_evaluate_kernel(source, *, op, reps, warmup, run_id=None):
         calls["n"] += 1
         if calls["n"] == 1:
             return {"rows": [], "correct_held_out": 3, "mean_held_out_speedup": 5.0, "mean_reward": 1.0}
@@ -381,7 +381,7 @@ def test_bandit_does_not_stop_before_all_arms_visited(tmp_path, monkeypatch):
 
     calls = {"n": 0}
 
-    def fake_evaluate_kernel(source, *, op, reps, warmup):
+    def fake_evaluate_kernel(source, *, op, reps, warmup, run_id=None):
         calls["n"] += 1
         if calls["n"] == 1:
             return {"rows": [], "correct_held_out": 3, "mean_held_out_speedup": 5.0, "mean_reward": 1.0}
@@ -411,7 +411,7 @@ def test_default_local_policy_unchanged_by_bandit_additions(tmp_path, monkeypatc
 
     calls = {"n": 0}
 
-    def fake_evaluate_kernel(source, *, op, reps, warmup):
+    def fake_evaluate_kernel(source, *, op, reps, warmup, run_id=None):
         calls["n"] += 1
         return {"rows": [], "correct_held_out": 3, "mean_held_out_speedup": 1.0, "mean_reward": 0.5}
 
@@ -423,3 +423,185 @@ def test_default_local_policy_unchanged_by_bandit_additions(tmp_path, monkeypatc
     assert result["trials"] == 5
     assert result["bandit"] is None
     assert result["stopped_early"] is False
+
+
+# --- Production robustness: input validation, provenance, run-id threading ---
+
+
+def _patch_eval(monkeypatch):
+    import protean.optimizer as optimizer
+
+    def fake_evaluate_kernel(source, *, op, reps, warmup, run_id=None):
+        return {"rows": [], "correct_held_out": 3, "mean_held_out_speedup": 1.0, "mean_reward": 0.5}
+
+    monkeypatch.setattr(optimizer, "evaluate_kernel", fake_evaluate_kernel)
+
+
+def test_run_optimization_rejects_unknown_edit_policy(tmp_path):
+    from protean.grader import ProteanValidationError
+
+    with pytest.raises(ProteanValidationError):
+        run_optimization(out_dir=tmp_path, max_rounds=1, edit_policy="nope")
+
+
+def test_run_optimization_rejects_non_positive_max_rounds(tmp_path):
+    from protean.grader import ProteanValidationError
+
+    with pytest.raises(ProteanValidationError):
+        run_optimization(out_dir=tmp_path, max_rounds=0)
+
+
+def test_run_optimization_rejects_empty_op(tmp_path):
+    from protean.grader import ProteanValidationError
+
+    with pytest.raises(ProteanValidationError):
+        run_optimization(out_dir=tmp_path, max_rounds=1, op="")
+
+
+def test_summary_carries_run_id_and_provenance_envelope(tmp_path, monkeypatch):
+    _patch_eval(monkeypatch)
+    # A fixed started_at avoids any wall-clock nondeterminism in the assertion.
+    result = run_optimization(
+        out_dir=tmp_path, max_rounds=1, run_id="fixedrun123", provenance_started_at=1700000000.0
+    )
+    assert result["run_id"] == "fixedrun123"
+    prov = result["provenance"]
+    assert prov["run_id"] == "fixedrun123"
+    assert prov["started_at"] == 1700000000.0
+    assert prov["python_version"].count(".") >= 1
+    assert prov["edit_policy"] == "local"
+    assert prov["op"] == "elementwise_add_relu"
+    assert "git_sha" in prov  # may be None when not in a git checkout
+    assert prov["config"]["max_rounds"] == 1
+    # Provenance must survive the round-trip to the on-disk summary.
+    on_disk = json.loads((tmp_path / "summary_elementwise_add_relu.json").read_text())
+    assert on_disk["provenance"]["run_id"] == "fixedrun123"
+
+
+def test_all_jsonl_rows_share_one_run_id(tmp_path, monkeypatch):
+    _patch_eval(monkeypatch)
+    run_optimization(out_dir=tmp_path, max_rounds=1, run_id="corr0001")
+    rows = [json.loads(line) for line in (tmp_path / "trials.jsonl").read_text().splitlines()]
+    assert rows  # seed + trials
+    assert all(row["run_id"] == "corr0001" for row in rows)
+    assert {row["event"] for row in rows} == {"seed", "trial"}
+
+
+def test_run_completes_when_trial_log_cannot_be_opened(tmp_path, monkeypatch):
+    # Graceful degradation: an unwritable trial log must not crash the run; the
+    # result dict is still returned.
+    _patch_eval(monkeypatch)
+    import protean.optimizer as optimizer
+
+    real_open = optimizer.Path.open
+
+    def boom(self, *args, **kwargs):
+        if self.name == "trials.jsonl":
+            raise OSError("disk full")
+        return real_open(self, *args, **kwargs)
+
+    monkeypatch.setattr(optimizer.Path, "open", boom)
+    result = run_optimization(out_dir=tmp_path, max_rounds=1)
+    assert result["trials"] == 5
+    assert not (tmp_path / "trials.jsonl").exists()
+
+
+def test_build_provenance_is_deterministic_given_inputs():
+    from protean.optimizer import build_provenance
+
+    a = build_provenance(run_id="r", started_at=1.0, edit_policy="local", op="elementwise_add_relu")
+    b = build_provenance(run_id="r", started_at=1.0, edit_policy="local", op="elementwise_add_relu")
+    # git_sha reads the environment; everything else must match exactly.
+    a.pop("git_sha")
+    b.pop("git_sha")
+    assert a == b
+
+
+# --- grade_source public-input validation (typed domain errors) -------------
+
+
+def test_grade_source_rejects_empty_source():
+    from protean.grader import ProteanValidationError, grade_source
+
+    with pytest.raises(ProteanValidationError):
+        grade_source("   ")
+
+
+def test_grade_source_rejects_non_string_source():
+    from protean.grader import ProteanValidationError, grade_source
+
+    with pytest.raises(ProteanValidationError):
+        grade_source(None)  # type: ignore[arg-type]
+
+
+def test_grade_source_rejects_unknown_op():
+    from protean.grader import ProteanValidationError, grade_source
+
+    with pytest.raises(ProteanValidationError) as exc:
+        grade_source("import triton", op="does_not_exist")
+    # The error message lists the valid choices for the caller.
+    assert "elementwise_add_relu" in str(exc.value)
+
+
+def test_grade_source_rejects_bad_split():
+    from protean.grader import ProteanValidationError, grade_source
+
+    with pytest.raises(ProteanValidationError):
+        grade_source("import triton", split="validation")  # type: ignore[arg-type]
+
+
+def test_grade_source_rejects_non_positive_reps_and_shape():
+    from protean.grader import ProteanValidationError, grade_source
+
+    with pytest.raises(ProteanValidationError):
+        grade_source("import triton", reps=0)
+    with pytest.raises(ProteanValidationError):
+        grade_source("import triton", warmup=-1)
+    with pytest.raises(ProteanValidationError):
+        grade_source("import triton", shape=0)
+
+
+def test_protean_validation_error_is_value_error_subclass():
+    # Back-compat: callers that previously caught the bare ValueError from
+    # get_op/shapes_for_split still catch the new typed error.
+    from protean.grader import ProteanValidationError, grade_source
+
+    with pytest.raises(ValueError):
+        grade_source("import triton", op="bogus")
+    assert issubclass(ProteanValidationError, ValueError)
+
+
+def test_grade_source_emits_run_id_in_result():
+    from protean.grader import grade_source
+
+    # A statically-rejected source still returns a well-formed dict carrying the
+    # caller-supplied run_id for log correlation.
+    grade = grade_source("x = 1\n", run_id="rid-abc")
+    assert grade["run_id"] == "rid-abc"
+    assert "no_triton_jit" in grade["caps"]
+
+
+def test_domain_errors_have_stable_public_import_paths():
+    # ProteanError / ProteanValidationError are part of the public contract.
+    # Pin their stable import paths so a future refactor (e.g. moving the
+    # hierarchy into a shared errors module) cannot silently break callers that
+    # import from either the grader (canonical home) or the optimizer (which
+    # raises them). Both must resolve to the *same* class objects.
+    from protean.grader import ProteanError as GErr
+    from protean.grader import ProteanValidationError as GValErr
+    from protean.optimizer import ProteanError as OErr
+    from protean.optimizer import ProteanValidationError as OValErr
+
+    assert OErr is GErr
+    assert OValErr is GValErr
+    assert issubclass(GValErr, GErr)
+    assert issubclass(GValErr, ValueError)
+
+    # The symbols are declared in each module's public __all__, not incidental.
+    import protean.grader as grader
+    import protean.optimizer as optimizer
+
+    assert "ProteanError" in grader.__all__
+    assert "ProteanValidationError" in grader.__all__
+    assert "ProteanError" in optimizer.__all__
+    assert "ProteanValidationError" in optimizer.__all__

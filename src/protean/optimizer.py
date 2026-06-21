@@ -7,12 +7,18 @@ current best kernel, edit it, grade it, keep improvements, and log everything.
 from __future__ import annotations
 
 import json
+import logging
 import math
+import os
+import platform
 import random
+import subprocess
+import sys
 import time
+import uuid
 from pathlib import Path
 
-from protean.grader import grade_source
+from protean.grader import ProteanError, ProteanValidationError, grade_source
 from protean.kernels import HAND_OPTIMIZED_ELEMENTWISE_ADD_RELU, seed_kernel_for
 from protean.model.policy import (
     config_action_space,
@@ -24,6 +30,143 @@ from protean.model.policy import (
 from protean.model.rl_layer import accept_candidate, score, score_delta
 from protean.model.tiny_policy import ACTION_BLOCK_SIZES, TinyPolicyHead, state_features
 from protean.splits import HELD_OUT_SHAPES, TRAIN_SHAPES
+
+# Public surface. The optimizer raises the grader's typed domain errors, so it
+# re-exports them: callers catching ``run_optimization`` failures can import the
+# error types from the same module they call, and the symbols are pinned against
+# drift regardless of where the hierarchy is physically defined.
+__all__ = [
+    "ProteanError",
+    "ProteanValidationError",
+    "BanditSearch",
+    "bandit_reward",
+    "build_provenance",
+    "evaluate_kernel",
+    "run_optimization",
+]
+
+_VALID_EDIT_POLICIES = ("local", "bandit", "learned", "fireworks")
+
+# --- Structured logging ----------------------------------------------------
+# Module logger for runtime diagnostics. NullHandler by default so importing
+# the optimizer is silent and existing tests are unaffected; set PROTEAN_LOG
+# (1 / DEBUG / INFO / ...) to attach a stderr handler.
+_LOG = logging.getLogger("protean.optimizer")
+_LOG.addHandler(logging.NullHandler())
+
+
+def _maybe_enable_logging() -> None:
+    level_env = os.environ.get("PROTEAN_LOG")
+    if not level_env:
+        return
+    if any(not isinstance(h, logging.NullHandler) for h in _LOG.handlers):
+        return
+    level = {"0": logging.CRITICAL + 1, "1": logging.INFO}.get(
+        level_env, getattr(logging, level_env.upper(), logging.INFO)
+    )
+    handler = logging.StreamHandler()
+    handler.setFormatter(logging.Formatter("%(asctime)sZ %(name)s %(levelname)s %(message)s"))
+    _LOG.addHandler(handler)
+    _LOG.setLevel(level)
+
+
+_maybe_enable_logging()
+
+
+def _log_event(level: int, event: str, **fields) -> None:
+    if not _LOG.isEnabledFor(level):
+        return
+    payload = " ".join(f"{k}={v}" for k, v in fields.items())
+    _LOG.log(level, "%s %s", event, payload)
+
+
+class _TrialLog:
+    """Append-only JSONL writer that degrades gracefully on I/O failure.
+
+    If the trial log cannot be opened (permissions, disk full) or a write
+    fails mid-run, the optimizer continues and still returns its result dict
+    rather than crashing the whole search. The first failure is logged once.
+    """
+
+    def __init__(self, path: Path) -> None:
+        self.path = path
+        self._warned = False
+        try:
+            self._fh = path.open("a")
+        except OSError as exc:
+            self._fh = None
+            _log_event(logging.WARNING, "trial_log_unavailable", path=str(path), error=str(exc))
+            self._warned = True
+
+    def write(self, line: str) -> None:
+        if self._fh is None:
+            return
+        try:
+            self._fh.write(line)
+        except OSError as exc:
+            if not self._warned:
+                _log_event(logging.WARNING, "trial_log_write_failed", path=str(self.path), error=str(exc))
+                self._warned = True
+
+    def __enter__(self) -> _TrialLog:
+        return self
+
+    def __exit__(self, *exc) -> None:
+        if self._fh is not None:
+            try:
+                self._fh.close()
+            except OSError:
+                pass
+
+
+def _git_sha() -> str | None:
+    """Best-effort short git SHA of the repo, or None if unavailable.
+
+    Pure provenance metadata; failures (no git, not a repo, git missing) are
+    swallowed so the optimizer never crashes for lack of version control.
+    """
+
+    try:
+        out = subprocess.run(
+            ["git", "rev-parse", "--short", "HEAD"],
+            cwd=Path(__file__).resolve().parent,
+            capture_output=True,
+            text=True,
+            timeout=5,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    sha = out.stdout.strip()
+    return sha or None
+
+
+def build_provenance(
+    *,
+    run_id: str,
+    started_at: float,
+    edit_policy: str,
+    op: str,
+    config: dict | None = None,
+) -> dict:
+    """Reproducibility envelope for an optimizer summary.
+
+    All fields are deterministic given the inputs except ``git_sha`` (read from
+    the environment). ``started_at`` is passed in by the caller (epoch seconds)
+    rather than read from the clock here, so tests can supply a fixed value and
+    avoid wall-clock nondeterminism.
+    """
+
+    return {
+        "run_id": run_id,
+        "started_at": started_at,
+        "git_sha": _git_sha(),
+        "python_version": sys.version.split()[0],
+        "platform": platform.platform(),
+        "edit_policy": edit_policy,
+        "op": op,
+        "config": config or {},
+    }
 
 
 class BanditSearch:
@@ -110,11 +253,22 @@ class BanditSearch:
         }
 
 
-def evaluate_kernel(source: str, *, op: str = "elementwise_add_relu", reps: int, warmup: int) -> dict:
+def evaluate_kernel(
+    source: str,
+    *,
+    op: str = "elementwise_add_relu",
+    reps: int,
+    warmup: int,
+    run_id: str | None = None,
+) -> dict:
     rows = []
     for split, shapes in (("train", TRAIN_SHAPES), ("held_out", HELD_OUT_SHAPES)):
         for shape in shapes:
-            rows.append(grade_source(source, op=op, split=split, shape=shape, reps=reps, warmup=warmup))
+            rows.append(
+                grade_source(
+                    source, op=op, split=split, shape=shape, reps=reps, warmup=warmup, run_id=run_id
+                )
+            )
 
     held_out = [row for row in rows if row["split"] == "held_out"]
     correct_held_out = [row for row in held_out if row["correct"] and not row["caps"]]
@@ -207,7 +361,18 @@ def run_optimization(
     bandit_seed: int = 0,
     bandit_patience: int = 0,
     bandit_arms: list[tuple[int, int, int]] | None = None,
+    run_id: str | None = None,
+    provenance_started_at: float | None = None,
 ) -> dict:
+    if edit_policy not in _VALID_EDIT_POLICIES:
+        raise ProteanValidationError(
+            f"edit_policy {edit_policy!r} must be one of {list(_VALID_EDIT_POLICIES)}"
+        )
+    if not isinstance(max_rounds, int) or isinstance(max_rounds, bool) or max_rounds < 1:
+        raise ProteanValidationError(f"max_rounds={max_rounds!r} must be an integer >= 1")
+    if not isinstance(op, str) or not op:
+        raise ProteanValidationError("op must be a non-empty string")
+
     out = Path(out_dir)
     out.mkdir(parents=True, exist_ok=True)
     candidate_dir = out / "candidates"
@@ -219,9 +384,25 @@ def run_optimization(
     if seed_source is None:
         seed_source = seed_kernel_for(op)
 
+    run_id = run_id or uuid.uuid4().hex
     best_source = seed_source
     started = time.time()
-    best_summary = evaluate_kernel(best_source, op=op, reps=30, warmup=8)
+    provenance = build_provenance(
+        run_id=run_id,
+        started_at=started if provenance_started_at is None else provenance_started_at,
+        edit_policy=edit_policy,
+        op=op,
+        config={
+            "max_rounds": max_rounds,
+            "policy_path": str(policy_path) if policy_path is not None else None,
+            "controller_path": str(controller_path) if controller_path is not None else None,
+            "bandit_c": bandit_c,
+            "bandit_seed": bandit_seed,
+            "bandit_patience": bandit_patience,
+        },
+    )
+    _log_event(logging.INFO, "run_start", run_id=run_id, op=op, edit_policy=edit_policy, max_rounds=max_rounds)
+    best_summary = evaluate_kernel(best_source, op=op, reps=30, warmup=8, run_id=run_id)
     best_score = score(best_summary)
     best_path.write_text(best_source)
     seed_path = candidate_dir / "0000_seed.py"
@@ -250,11 +431,12 @@ def run_optimization(
             group=hud_group,
         )
 
-    with log_path.open("a") as log:
+    with _TrialLog(log_path) as log:
         log.write(
             json.dumps(
                 {
                     "event": "seed",
+                    "run_id": run_id,
                     "time": time.time(),
                     "elapsed_sec": round(time.time() - started, 6),
                     "policy": "seed",
@@ -313,6 +495,7 @@ def run_optimization(
                         op=op,
                         reps=int(edit.harness["reps"]),
                         warmup=int(edit.harness["warmup"]),
+                        run_id=run_id,
                     )
                 except Exception as exc:  # noqa: BLE001 - model kernels can fail in many ways.
                     eval_error = {
@@ -322,6 +505,15 @@ def run_optimization(
                     candidate_summary = failed_evaluation_summary(exc)
                 candidate_score = score(candidate_summary)
                 accepted = eval_error is None and accept_candidate(candidate_score, best_score)
+                _log_event(
+                    logging.INFO,
+                    "trial_accept" if accepted else "trial_reject",
+                    run_id=run_id,
+                    trial=trial_count,
+                    round=round_idx,
+                    edit=edit.name,
+                    eval_error=eval_error["type"] if eval_error else None,
+                )
                 if accepted:
                     accepted_count += 1
                     round_improved = True
@@ -380,6 +572,7 @@ def run_optimization(
                     json.dumps(
                         {
                             "event": "trial",
+                            "run_id": run_id,
                             "time": time.time(),
                             "elapsed_sec": round(time.time() - started, 6),
                             "trial": trial_count,
@@ -434,6 +627,8 @@ def run_optimization(
                 break
 
     final = {
+        "run_id": run_id,
+        "provenance": provenance,
         "best_score": best_score,
         "best_summary": best_summary,
         "best_kernel": str(best_path),

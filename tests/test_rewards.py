@@ -179,6 +179,63 @@ def test_lower_bound_clamp_does_not_change_bonus_mode_values():
     assert grade["reward"] == round(min(expected, cfg.max_reward), 6)
 
 
+def test_pr_frac_gate_default_is_noop():
+    # Default pr_frac_gate=0.0 must not change any reward value, even at pr=0.
+    assert DEFAULT_CONFIG.pr_frac_gate == 0.0
+    grade = compute_reward(**_correct_kwargs(speedup=4.0, pr_frac=0.0))
+    assert "below_pr_gate" not in grade["caps"]
+    assert grade["reward"] > 0.0
+
+
+def test_pr_frac_gate_rejects_low_pr_kernels():
+    cfg = replace(DEFAULT_CONFIG, pr_frac_gate=0.3)
+    grade = compute_reward(**_correct_kwargs(speedup=4.0, pr_frac=0.1), config=cfg)
+    assert "below_pr_gate" in grade["caps"]
+    assert grade["reward"] == 0.0
+    assert grade["speedup_reward"] == 0.0
+    assert grade["pr_reward"] == 0.0
+    # A hard failure must zero EVERY sub-score, not just the total. Otherwise a
+    # gated-but-correct kernel would report a non-zero correctness floor next to
+    # reward=0.0, an internally inconsistent audit trail.
+    assert grade["correctness_reward"] == 0.0
+
+
+def test_pr_frac_gate_zeros_all_subscores_for_correct_kernel():
+    # The kernel is correct/fast (would normally earn correctness floor + speedup
+    # + pr terms) but below the PR gate: every reward component must read 0.0 so
+    # downstream dashboards/sum-of-subscores stay consistent with reward=0.0.
+    cfg = replace(DEFAULT_CONFIG, pr_frac_gate=0.3)
+    grade = compute_reward(**_correct_kwargs(speedup=8.0, pr_frac=0.05), config=cfg)
+    assert grade["reward"] == 0.0
+    assert grade["correctness_reward"] == 0.0
+    assert grade["speedup_reward"] == 0.0
+    assert grade["pr_reward"] == 0.0
+    assert grade["correct"] is True  # correctness gate itself still passed
+
+
+def test_pr_frac_gate_admits_bottleneck_kernels():
+    cfg = replace(DEFAULT_CONFIG, pr_frac_gate=0.3)
+    grade = compute_reward(**_correct_kwargs(speedup=4.0, pr_frac=0.5), config=cfg)
+    assert "below_pr_gate" not in grade["caps"]
+    assert grade["reward"] > 0.0
+    assert grade["reward"] <= cfg.max_reward
+
+
+def test_pr_frac_gate_boundary_is_inclusive_at_gate():
+    # pr_frac exactly at the gate is admitted (strict < rejection).
+    cfg = replace(DEFAULT_CONFIG, pr_frac_gate=0.3)
+    grade = compute_reward(**_correct_kwargs(speedup=4.0, pr_frac=0.3), config=cfg)
+    assert "below_pr_gate" not in grade["caps"]
+    assert grade["reward"] > 0.0
+
+
+def test_pr_frac_gate_loads_from_config_dict():
+    from protean.rewards import RewardConfig
+
+    cfg = RewardConfig(pr_frac_gate=0.4)
+    assert cfg.pr_frac_gate == 0.4
+
+
 def test_pr_modes_do_not_leak_reward_on_hard_failure():
     for mode in ("bonus", "multiplicative", "centered"):
         cfg = replace(DEFAULT_CONFIG, pr_mode=mode)
@@ -194,3 +251,5 @@ def test_pr_modes_do_not_leak_reward_on_hard_failure():
         )
         assert grade["reward"] == 0.0
         assert grade["pr_reward"] == 0.0
+        assert grade["correctness_reward"] == 0.0
+        assert grade["speedup_reward"] == 0.0

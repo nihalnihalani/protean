@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import ast
+import sys
 
 BANNED_CALLS = {
     "torch.add",
@@ -17,14 +18,61 @@ BANNED_CALLS = {
     "torch.rsqrt",
     "torch.sum",
     "torch.nn.functional.relu",
+    # Dotted aliases of banned builtins reached through the io/builtins modules.
+    # `io.open` is `builtins.open`; `builtins.getattr`/`builtins.eval` reconstruct
+    # the bare builtins past the BANNED_NAMES check (which only sees ast.Name
+    # targets). The attribute-leaf check below catches these generically, but the
+    # explicit entries keep the reported reason stable and self-documenting.
+    "io.open",
+    "builtins.open",
+    "builtins.getattr",
+    "builtins.setattr",
+    "builtins.eval",
+    "builtins.exec",
+    "builtins.compile",
+    "builtins.__import__",
+    "builtins.vars",
+    "builtins.globals",
+    "builtins.locals",
 }
-BANNED_NAMES = {"eval", "exec", "compile", "__import__", "open", "getattr"}
+# Bare-builtin call bans. eval/exec/compile/__import__/open/getattr are the
+# classic dynamic-execution and file-access primitives. setattr/globals/locals/
+# vars/__builtins__/__class__ close the indirect-builtin-reconstruction bypass:
+# without them a candidate could write `globals()["__builtins__"]["__import__"]("os")`
+# or `setattr(mod, "attr", bad_fn)` and slip past the AST walk entirely. The
+# longer-term hard boundary is subprocess isolation (KernelGym / SOL-ExecBench
+# arXiv:2603.19173), but each name here is a zero-cost AST string-set lookup that
+# closes a today-exploitable static gap. Source: IMPROVEMENT_RESEARCH.md item #14.
+BANNED_NAMES = {
+    "eval",
+    "exec",
+    "compile",
+    "__import__",
+    "open",
+    "getattr",
+    "setattr",
+    "globals",
+    "locals",
+    "vars",
+    "__builtins__",
+    "__class__",
+}
 
 # Import-root bans block whole packages that let a candidate delegate the real
 # computation off the @triton.jit path. ctypes/cffi can dlopen libcublas.so and
 # call cuBLAS directly; cupy/pycuda/cuda are GPU compute backends; numpy is a
 # host-compute escape. importlib/subprocess/os/sys/pathlib are process/FS
 # escapes. Source: GAP_ANALYSIS G5; CUDA-Agent / SOL-ExecBench (arXiv 2603.19173).
+#
+# The concurrency family (threading/concurrent/multiprocessing/_thread) maps to
+# the "concurrency exploit" category in SOL-ExecBench Table 3: hiding GPU work on
+# un-timed Python threads or via torch.jit.fork (call-site already prefix-banned,
+# but the import was not). The binary-embedding family
+# (base64/binascii/tempfile/shutil/zipfile/tarfile) is used to decode and dlopen
+# a precompiled cubin, bypassing the @triton.jit requirement entirely.
+# pickle/shelve close the state-caching deserialization angle. Each entry is a
+# pure AST string-set lookup with zero runtime cost.
+# Source: SOL-ExecBench arXiv:2603.19173 Table 3; IMPROVEMENT_RESEARCH.md item #3.
 BANNED_IMPORT_ROOTS = {
     "importlib",
     "subprocess",
@@ -37,6 +85,43 @@ BANNED_IMPORT_ROOTS = {
     "pycuda",
     "cuda",
     "numpy",
+    # `io` is the stdlib file-access alias around `open` (io.open == builtins.open),
+    # so banning bare `open` without `io` left a direct read of the hidden grader /
+    # reward config (/donotaccess) reachable on a misconfigured dev host. `builtins`
+    # exposes __import__/getattr/eval as attributes (builtins.__import__("os")), which
+    # the bare-name BANNED_NAMES check cannot see; banning the import root closes that
+    # reconstruction path. Source: IMPROVEMENT_RESEARCH.md item #14.
+    "io",
+    "builtins",
+    # concurrency exploit family (un-timed off-thread GPU work)
+    "threading",
+    "concurrent",
+    "multiprocessing",
+    "_thread",
+    "asyncio",
+    # network / exfiltration family (a kernel must never open a socket; closes the
+    # data-exfiltration + fetch-precompiled-cubin-over-network vectors). SOL-ExecBench
+    # arXiv:2603.19173 network category; devil's-advocate follow-up (socket/urllib were open).
+    "socket",
+    "urllib",
+    "urllib3",
+    "http",
+    "httplib",
+    "ftplib",
+    "smtplib",
+    "telnetlib",
+    "requests",
+    "ssl",
+    # binary-embedding family (decode + dlopen a precompiled cubin)
+    "base64",
+    "binascii",
+    "tempfile",
+    "shutil",
+    "zipfile",
+    "tarfile",
+    # state-caching / deserialization family
+    "pickle",
+    "shelve",
 }
 
 # Import-module bans are matched as dotted-path prefixes against the FULL module
@@ -65,7 +150,25 @@ BANNED_PREFIXES = (
     "torch.jit.fork",
     "torch.cuda.Stream",
     "torch._C",
+    "builtins.__import__",
 )
+
+# Leaf attribute names that are dangerous regardless of the object they are
+# called on. The bare-name BANNED_NAMES check only fires when the call target is
+# an ast.Name (`getattr(...)`); a dotted call like `builtins.getattr(...)` or
+# `mod.__import__(...)` is an ast.Attribute and slips through. We ban the leaf
+# (`node.func.attr`) for these dynamic-execution / file-access primitives. The
+# set is deliberately narrow -- e.g. `compile` is excluded because `torch.compile`
+# is already handled by BANNED_CALLS and a legitimate method named `compile` on a
+# user object would false-positive; the genuinely exploitable leaves are the
+# import/exec/eval/builtins-reconstruction ones.
+BANNED_CALL_LEAVES = {
+    "eval",
+    "exec",
+    "__import__",
+    "getattr",
+    "setattr",
+}
 
 
 def _dotted(node: ast.AST) -> str:
@@ -126,6 +229,22 @@ def ast_clean(src: str) -> tuple[bool, str]:
                 return False, f"ast_ban:{name}"
             if isinstance(node.func, ast.Name) and node.func.id in BANNED_NAMES:
                 return False, f"ast_ban:{node.func.id}"
+            # Dotted call whose LEAF is a dynamic-execution primitive, e.g.
+            # `builtins.getattr(...)`, `mod.__import__(...)`, `x.eval(...)`. The
+            # bare-name check above cannot see these because node.func is an
+            # ast.Attribute, not an ast.Name.
+            if isinstance(node.func, ast.Attribute) and node.func.attr in BANNED_CALL_LEAVES:
+                return False, f"ast_ban:{node.func.attr}"
+
+        # Subscript reconstruction of banned builtins, e.g.
+        # `__builtins__["eval"]("...")` or `something.__dict__["__import__"]`. The
+        # call target there is an ast.Subscript (not a Name/Attribute), so the
+        # call-site checks miss it; we flag any subscript whose base resolves to
+        # __builtins__ or ends in __dict__.
+        if isinstance(node, ast.Subscript):
+            base = _dotted(node.value)
+            if base == "__builtins__" or base.endswith("__dict__") or base.endswith(".__builtins__"):
+                return False, "ast_ban:builtins_subscript"
 
         # Also catch banned dispatch chains referenced as bare attributes (not
         # only as the call target), e.g. handing torch.ops.aten.add to a helper.
@@ -141,6 +260,11 @@ def ast_clean(src: str) -> tuple[bool, str]:
 
         if isinstance(node, ast.ImportFrom):
             module = node.module or ""
+            # Relative imports (`from . import x`, `from ..pkg import y`) are
+            # abnormal in self-contained generated kernel code and could reach
+            # the grader's own package namespace. Reject them outright.
+            if node.level and node.level > 0:
+                return False, "ast_ban:relative_import"
             if _module_banned(module):
                 return False, f"ast_ban:import:{module}"
             # `from torch import nn` / `from torch import ops`: the submodule is
@@ -151,6 +275,58 @@ def ast_clean(src: str) -> tuple[bool, str]:
                         return False, f"ast_ban:import:torch.{alias.name}"
 
     return True, ""
+
+
+def _audit_import_hook(event: str, args: tuple) -> None:
+    """PEP 578 audit hook that blocks runtime imports of banned modules.
+
+    Defense-in-depth backstop for the AST static ban: it catches dynamic-import
+    bypasses that slip past static analysis (e.g. ``__import__("o" + "s")``
+    string-concat obfuscation, or an import buried in a helper the AST walk did
+    not reason about). It mirrors BANNED_IMPORT_ROOTS / BANNED_IMPORT_MODULES so
+    the two stay in lockstep.
+
+    This hook lives in anti_hack (not bench_core) on purpose: anti_hack is
+    imported eagerly by grader at module top, whereas bench_core is imported
+    lazily only behind the CUDA guard. Installing the hook here means it is armed
+    on every code path that touches the grader -- including CPU-only entry points
+    that never trigger a CUDA eval -- closing the "hook installed too late"
+    window. The hard isolation boundary is still subprocess + RLIMIT (KernelGym),
+    which is GPU-blocked here.
+
+    CRITICAL caveat: audit hooks added from Python (via sys.addaudithook, not the
+    C API PySys_AddAuditHook before Py_Initialize) CAN be bypassed by adversarial
+    code that reaches the C layer directly -- the CPython docs and cpython issue
+    #87604 are explicit about this. Treat this as defense-in-depth against naive
+    runtime bypasses, NOT as a hard security boundary.
+    Source: PEP 578; CPython issue #87604; IMPROVEMENT_RESEARCH.md item #14.
+    """
+    if event != "import":
+        return
+    module = args[0] if args else ""
+    if not module:
+        return
+    if _module_banned(module):
+        raise ImportError(f"Blocked import (audit hook): {module}")
+
+
+def install_audit_hook() -> None:
+    """Install the import audit hook once. Idempotent across repeated imports.
+
+    Call this at the single chokepoint where untrusted candidate code is about to
+    be executed (load_solution), NOT eagerly at module-import time. An import
+    audit hook that bans stdlib roots (importlib/os/sys) cannot be armed during
+    interpreter bootstrap: CPython itself lazily imports importlib.machinery,
+    os, etc. while loading our own dependency tree, and a process-wide hook armed
+    too early would raise ImportError on those legitimate host imports and crash
+    the program. Arming it immediately before candidate exec is both correct (the
+    host's own imports have already completed) and sufficient (no candidate runs
+    before load_solution). Source: PEP 578; CPython issue #87604;
+    IMPROVEMENT_RESEARCH.md item #14.
+    """
+    if not getattr(sys, "_protean_audit_hook_installed", False):
+        sys.addaudithook(_audit_import_hook)
+        sys._protean_audit_hook_installed = True  # type: ignore[attr-defined]
 
 
 def contains_triton_jit(src: str) -> bool:

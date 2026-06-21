@@ -1,0 +1,22 @@
+# Ruff configuration for Protean.
+# Canonical lint/format config (takes precedence over any [tool.ruff] in pyproject.toml).
+line-length = 99
+target-version = "py311"
+exclude = [".venv", "build", "dist", "__pycache__"]
+
+[lint]
+# E/F/W: pycodestyle + pyflakes. I: import sorting. UP: pyupgrade.
+# B: bugbear. SIM: flake8-simplify.
+select = ["E", "F", "W", "I", "UP", "B", "SIM"]
+# B008: function call in default arg (false positives on argparse/dataclass patterns).
+# SIM105: contextlib.suppress is not always clearer than try/except/pass.
+ignore = ["B008", "SIM105"]
+
+[lint.per-file-ignores]
+# Tests favour readability over line length.
+"tests/**/*.py" = ["E501"]
+# Scripts insert src/ onto sys.path before importing protean (module-level import-not-at-top).
+"scripts/**/*.py" = ["E402"]
+
+[format]
+quote-style = "double"
