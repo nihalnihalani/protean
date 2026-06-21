@@ -137,6 +137,51 @@ def paired_report(base: dict, trained: dict, B: int = 10000) -> dict:
     }
 
 
+# ---------------------------------------------------------------------------
+# Bridge to the REAL verifier (protean.grader.grade_source). GPU-only at run time;
+# imports are local so this module stays import-light for the CPU test suite.
+# A fixed kernel source is deterministic per shape, so rollouts=1 (the policy is the
+# source; base vs trained = two fixed sources graded on the SAME held-out shapes).
+# ---------------------------------------------------------------------------
+def grade_reward(source: str, op: str, shape: int, reps: int = 50, warmup: int = 10) -> tuple:
+    """Return (reward, caps) from the real grader. reward=0.0 on cuda_unavailable / any cap."""
+    from protean.grader import grade_source
+    g = grade_source(source, op=op, split="held_out", shape=shape, reps=reps, warmup=warmup)
+    return float(g.get("reward", 0.0)), list(g.get("caps", []))
+
+
+def evaluate_sources(sources_by_op: dict, n_per_op: int = N_HELDOUT_PER_OP,
+                     reps: int = 50, warmup: int = 10, seed: int = 0) -> tuple:
+    """Grade one fixed kernel source per op across the powered continuous held-out set.
+
+    sources_by_op: {op_name -> kernel_source}. Returns ({(op,idx)->reward}, tasks, caps_seen).
+    """
+    ops = list(sources_by_op)
+    tasks = build_eval_set(ops, n_per_op, seed)
+    rewards, caps_seen = {}, set()
+    for t in tasks:
+        r, caps = grade_reward(sources_by_op[t["op"]], t["op"], t["shape"], reps, warmup)
+        rewards[(t["op"], t["idx"])] = r
+        caps_seen.update(caps)
+    return rewards, tasks, caps_seen
+
+
+def paired_sources_report(base_sources: dict, trained_sources: dict, n_per_op: int = N_HELDOUT_PER_OP,
+                          reps: int = 50, warmup: int = 10, seed: int = 0, B: int = 10000) -> dict:
+    """End-to-end powered comparison of two fixed kernels-per-op via the real grader.
+
+    Use on a GPU box: e.g. base = seed kernels, trained = optimizer best kernels. With only the 2 real
+    ops (elementwise_add_relu, rmsnorm) the across-op sign test is auxiliary (K=2); the per-task
+    continuous hierarchical bootstrap over n_per_op shapes carries the power.
+    """
+    base, tasks, base_caps = evaluate_sources(base_sources, n_per_op, reps, warmup, seed)
+    trained, _, trained_caps = evaluate_sources(trained_sources, n_per_op, reps, warmup, seed)
+    rep = paired_report(base, trained, B=B)
+    rep["caps_seen"] = sorted(base_caps | trained_caps)
+    rep["cuda_unavailable"] = "cuda_unavailable" in rep["caps_seen"]
+    return rep
+
+
 if __name__ == "__main__":
     rng = random.Random(7)
     ops = [f"op{i}" for i in range(N_OPS)]
