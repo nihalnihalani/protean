@@ -7,45 +7,14 @@ current best kernel, edit it, grade it, keep improvements, and log everything.
 from __future__ import annotations
 
 import json
-import re
 import time
-from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterable
 
 from protean.grader import grade_source
 from protean.kernels import HAND_OPTIMIZED_ELEMENTWISE_ADD_RELU
+from protean.model.policy import local_kernel_edits
+from protean.model.rl_layer import accept_candidate, score, score_delta
 from protean.splits import HELD_OUT_SHAPES, TRAIN_SHAPES
-
-
-@dataclass(frozen=True)
-class CandidateEdit:
-    name: str
-    reason: str
-    source: str
-    harness: dict
-
-
-def _replace_block_size(source: str, block_size: int) -> str:
-    source = re.sub(r"triton\.cdiv\(n_elements,\s*\d+\)", f"triton.cdiv(n_elements, {block_size})", source)
-    source = re.sub(r"block_size=\d+", f"block_size={block_size}", source)
-    return source
-
-
-def local_kernel_edits(current_best: str) -> Iterable[CandidateEdit]:
-    """Small deterministic edit policy.
-
-    This intentionally edits the current best implementation instead of starting
-    from scratch. A model-backed policy can replace this function later.
-    """
-
-    for block_size in (128, 256, 512, 1024, 2048):
-        yield CandidateEdit(
-            name=f"block_size_{block_size}",
-            reason=f"Retune Triton block size to {block_size}.",
-            source=_replace_block_size(current_best, block_size),
-            harness={"reps": 30, "warmup": 8},
-        )
 
 
 def evaluate_kernel(source: str, *, reps: int, warmup: int) -> dict:
@@ -65,22 +34,6 @@ def evaluate_kernel(source: str, *, reps: int, warmup: int) -> dict:
         "correct_held_out": len(correct_held_out),
         "mean_held_out_speedup": round(mean_held_out_speedup, 6),
         "mean_reward": round(mean_reward, 6),
-    }
-
-
-def score(summary: dict) -> tuple[float, float, int]:
-    return (
-        float(summary["mean_held_out_speedup"]),
-        float(summary["mean_reward"]),
-        int(summary["correct_held_out"]),
-    )
-
-
-def score_delta(candidate: tuple[float, float, int], baseline: tuple[float, float, int]) -> dict:
-    return {
-        "held_out_speedup": round(candidate[0] - baseline[0], 6),
-        "reward": round(candidate[1] - baseline[1], 6),
-        "correct_held_out": candidate[2] - baseline[2],
     }
 
 
@@ -139,7 +92,7 @@ def run_optimization(
                     warmup=int(edit.harness["warmup"]),
                 )
                 candidate_score = score(candidate_summary)
-                accepted = candidate_score > best_score
+                accepted = accept_candidate(candidate_score, best_score)
                 if accepted:
                     accepted_count += 1
                     best_source = edit.source
@@ -156,11 +109,11 @@ def run_optimization(
                             "round": round_idx,
                             "edit": edit.name,
                             "reason": edit.reason,
-                            "policy": "local_deterministic",
+                            "policy": edit.policy,
                             "harness": edit.harness,
                             "source_path": str(candidate_path),
-                            "model_cost_usd": 0.0,
-                            "tokens": 0,
+                            "model_cost_usd": edit.model_cost_usd,
+                            "tokens": edit.tokens,
                             "best_score_before": before_score,
                             "score": candidate_score,
                             "delta_vs_best": score_delta(candidate_score, before_score),

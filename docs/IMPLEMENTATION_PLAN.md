@@ -20,18 +20,26 @@ Keep the repo small. The goal is an overnight optimizer, but each layer must wor
 ## Layer 3: Iterative Optimizer
 
 - Start from the current best kernel.
-- Generate candidate edits by modifying that kernel.
+- Generate candidate edits through `src/protean/model/policy.py`.
 - Grade each candidate.
-- Accept only candidates that improve held-out speed/reward.
+- Accept only candidates that improve held-out speed/reward through `src/protean/model/rl_layer.py`.
 - Log each trial as JSONL with candidate source path, edit reason, harness settings, score, delta versus the current best, acceptance, elapsed time, model cost, and per-shape results.
 - Write the best kernel to `runs/protean-overnight/best_kernel.py`.
 
-## Layer 4: Add More
+## Layer 4: Model-Agent Self-Improvement
+
+- Keep all model-related files in `src/protean/model/`.
+- Let the model propose changes to the edit policy, RL scoring rule, and harness settings.
+- Run the same verifier after every policy change.
+- Keep policy changes only when they improve held-out speed or reduce wasted trials.
+- Log policy diffs and their before/after optimizer outcomes.
+
+## Layer 5: Add More
 
 Only after Layer 1 and 2 pass on Spark:
 
 1. Replace deterministic edits with a model-backed edit policy.
-2. Let the model propose harness and reward mutations.
+2. Let the model propose harness and reward mutations inside `src/protean/model/`.
 3. Add `rmsnorm`.
 4. Add HUD remote packaging.
 5. Add GRPO training.

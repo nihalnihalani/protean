@@ -1,5 +1,6 @@
 from protean.kernels import HAND_OPTIMIZED_ELEMENTWISE_ADD_RELU
-from protean.optimizer import local_kernel_edits, score, score_delta
+from protean.model.policy import local_kernel_edits
+from protean.model.rl_layer import score, score_delta
 
 
 def test_local_edits_modify_current_best_source():

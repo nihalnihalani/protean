@@ -17,6 +17,7 @@ The verifier is the measurement core. The product is the improvement loop around
 - GPU grader that checks correctness, dtype, shape, `@triton.jit` usage, and CUDA timing.
 - Demo scripts that output JSON and Markdown benchmark artifacts.
 - Iterative optimizer that edits the current best kernel, evaluates each candidate, accepts improvements, and logs every trial.
+- One model-agent folder, `src/protean/model/`, for the edit policy, RL layer, harness policy, prompts, and model config.
 
 ## Install
 
@@ -98,7 +99,7 @@ Hard failures get zero reward. Slow-but-correct kernels can report correctness, 
 ## Add Next
 
 1. Replace the deterministic edit policy with a model-backed edit policy.
-2. Let the model tune the harness and reward settings, with every change logged.
+2. Let the model improve `src/protean/model/rl_layer.py` and `src/protean/model/harness.py`, with every change logged.
 3. Add `rmsnorm` as the second optimization target.
 4. Add training/RL only after the optimizer loop is stable on two ops.
 

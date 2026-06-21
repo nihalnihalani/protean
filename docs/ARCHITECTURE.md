@@ -49,8 +49,16 @@ candidate source
 - `src/protean/optimizer.py`
   - Runs the improvement loop.
   - Starts from the current best kernel.
-  - Generates edits, evaluates them, accepts improvements, and writes logs.
+  - Calls the model-agent layer for edits and acceptance policy.
+  - Evaluates candidates, accepts improvements, and writes logs.
   - Saves every candidate source file and records score deltas against the current best.
+
+- `src/protean/model/`
+  - Single home for model-related hackathon files.
+  - `policy.py` proposes kernel edits.
+  - `rl_layer.py` scores and accepts candidates.
+  - `harness.py` owns benchmark knobs the agent can tune.
+  - `prompts/` and `configs/` hold the model prompt contract and active policy config.
   - The current edit policy is deterministic; a model-backed policy should replace it next.
 
 ## Scripts
@@ -89,8 +97,8 @@ Spark has already produced a real held-out delta for `elementwise_add_relu`.
 
 Add features in this order only:
 
-1. Model-backed kernel edit policy.
-2. Harness and reward mutation policy with explicit logs.
+1. Model-backed kernel edit policy in `src/protean/model/policy.py`.
+2. Self-improvement policy for `src/protean/model/rl_layer.py` and `src/protean/model/harness.py`.
 3. `rmsnorm` as the second op.
 4. Profiler-based runtime attribution if needed.
 5. HUD remote packaging.
