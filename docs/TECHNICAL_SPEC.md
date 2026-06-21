@@ -33,7 +33,7 @@ prompt(op, shape)  ──►  πθ (Qwen2.5-Coder-7B + LoRA, vLLM colocate)  ─
 | `op` | fused operator from registry `O` | §9; e.g. `matmul_bias_gelu`, `softmax`, `layernorm`, `elementwise_add_relu` |
 | `M` | tensor size parameter (one shape axis) | §9 |
 | `S_train` | training shape grid | `{256, 512, 1024, 2048}` (`splits.py`) |
-| `S_test` | held-out shape band | `{400, 800, 1600, 383, 769, 3072}` (`splits.py`) |
+| `S_test` | held-out shapes | DEV: `HELD_OUT_SHAPES` (3); CLAIM: continuous off-grid, 5 ops × 40 = **200** paired tasks via `sample_heldout_shape` (`splits.py`, §5.4) |
 | `k` | candidate kernel source | model output |
 | `C ∈ {0,1}` | binary correctness (allclose on fresh inputs) | `bench_core.py` |
 | `T_eager(s)` | median wall-clock of PyTorch eager at shape `s` | `bench_core.py` |
@@ -378,59 +378,56 @@ fast_p(π, S) = (1/|S|) Σ_{s∈S} 1[ correct(π, s) AND speedup(π, s) > p ].
 
 Report `fast_1` (comparable to all published baselines) and `fast_1.2` (Dr.Kernel/daVinci threshold). `fast_p` denominates over **all** tasks, not just correct ones (KernelBench `score.py`).
 
-### 5.4 Sample size, MDD, and the clustering correction
+### 5.4 Powered evaluation design (paired · continuous · hierarchical) — resolves the n=24 problem
 
-**Naive (independent) two-proportion MDD** at α=0.05 (z=1.96), power=0.80 (z=0.842):
+The original 24-task design (and the MVP's 3 dev shapes) was underpowered *by construction*: a clustered binary
+`fast_p` over a few fixed shapes. With per-op intra-cluster `ρ=0.5`, `n_eff = 24/(1+5·0.5) ≈ 7` and
+`MDD ≈ 2.802·√(2·0.2·0.8/7) ≈ 47 pp` — above any realistic 7B-overnight gap. **Implemented fix:**
+`protean.eval_protocol` + the continuous held-out sampler in `splits.py` (the 3+3 `TRAIN_SHAPES`/`HELD_OUT_SHAPES`
+stay the verifier-first DEV shapes; the generalization *claim* uses the powered set below):
 
-```
-MDD = (z_{α/2} + z_β)·sqrt( 2·p·(1−p) / n ) = 2.802·sqrt( 2p(1−p)/n ).
-```
+1. **Unit = held-out task `(op, shape)`**, never a rollout (no pseudoreplication).
+2. **Scale = `N_OPS·N_HELDOUT_PER_OP = 5·40 = 200` tasks** over *continuous* off-grid shapes (`sample_heldout_shape`; every shape off both the power-of-two and the 64-tiling grid; >170 distinct sizes).
+3. **Paired** — `π_base`, `π_θ` graded on the *same* tasks; endpoint `Δ(t)=r̄_θ(t)−r̄_base(t)`. Pairing removes between-task/op variance.
+4. **Continuous endpoint** — per-task mean reward `r̄∈[0,2]` over `R=8` rollouts (more Fisher information than a clustered Bernoulli; averaging shrinks within-task variance ∝1/R).
 
-At `n = 24` (4 ops × 6 test shapes):
+Two inferences (`paired_report`):
 
-| baseline p | MDD (naive) |
-|---|---|
-| 0.10 | **0.243** |
-| 0.20 | **0.323** |
-| 0.50 | **0.404** |
+**(a) Magnitude + CI — hierarchical bootstrap** (resample ops, then shapes within op, `B=10⁴`): cluster-aware 95 % CI on `Gap = mean_t Δ(t)`.
 
-Headline (conservative, p≈0.2): **MDD ≈ 32 pp** naive. The Wilson 95 % CI half-width at p=0.2, n=24 is ≈ **0.16** — a *CI width*, **not** an MDD; the two must not be conflated.
+**(b) Significance — across-op sign test (clustering-immune):** with `K` ops all-positive ⇒ one-sided `p=(1/2)^K`. `K=5 → 0.031`, `K=6 → 0.016`. Independent of within-op `ρ`. Headline significance.
 
-**Clustering correction (the binding number).** The 6 shapes per op are graded by the *same checkpoint on the same op* → positively correlated; treating them as 24 independent Bernoulli trials overstates power. Apply the design effect with `m = 6` shapes/op and intra-op `ρ`:
-
-```
-n_eff = n_total / (1 + (m−1)·ρ̂).
-```
-
-At `ρ = 0.5`: per-op `n_eff = 6/(1+5·0.5) = 1.71`, total `n_eff = 4·1.71 ≈ 6.9`, so
+**Power.** Paired standardized MDE `d_z = (z_{α/2}+z_β)/√n = 2.802/√n`:
 
 ```
-MDD = 2.802·sqrt( 2·0.2·0.8 / 6.9 ) ≈ 2.802·0.215 ≈ 0.60  (≈ 47 pp).
+old dev n=3   →  MDE d_z = 1.617
+old n=24      →  MDE d_z = 0.572
+new n=200     →  MDE d_z = 0.198   (detects small-to-medium per-task effects @ 80% power)
+required paired n for d_z=0.4 @ 80% power = 50
 ```
 
-**Headline (adopt this):** with clustered `n_eff ≈ 7`, **MDD ≈ 47 pp at 80 % power** assuming `ρ = 0.5`; estimate `ρ̂` from the pilot rather than assuming. Do **not** report the naive n=24 number as if independent.
+Even with a conservative design effect on the *delta* (`ρ_Δ≈0.1`, `m=40`): `n_eff≈41` → `MDE d_z≈0.44`; the sign test is exact regardless of `ρ`.
 
-### 5.5 Reporting and the joint (steps × gap) honesty statement
+### 5.5 Reporting
 
-- Error bars: **Wilson interval** for the binary `fast_p` rate; **matched-pair bootstrap** (§4.7) for the speedup panel. Pin both in SLIDES.
-- A plausible 7B-overnight true gap is 10–20 pp, **below** MDD ≈ 47 pp at `n_eff ≈ 7` (and below 32 pp even naively). **Significance is not attainable at this scale regardless of step count.** Frame the money slide explicitly:
+- **Money number:** `Gap` (mean per-task Δ, continuous reward) + hierarchical-bootstrap 95 % CI.
+- **Significance:** across-op sign-test p (ρ-free) **and** whether the bootstrap CI excludes 0.
+- **Panels:** per-op Δ breakdown (replication across ops), binary `fast_1.2` gap (op-cluster bootstrap), speedup matched-pair bootstrap (§4.7).
+- A run is **POWERED** iff the CI excludes 0 **or** sign-test p ≤ 0.05 (`paired_report(...)['powered']`).
 
-> *The held-out gap is **directional, single-run** evidence. With `n_eff ≈ 7` (24 clustered tasks), detecting a 10–20 pp gap at 80 % power needs ~70+ effective tasks or a >32–47 pp true gap. We are underpowered **by design** — a hackathon constraint, not a significance claim.*
+### 5.6 Worked example (`eval_protocol.py` self-test + `tests/test_eval_protocol.py`, all green)
 
-- **Recommended expansion:** add 6 off-grid shapes per op (`{192, 576, 960, 1344, 1729, 2561}`, all disjoint, asserted) → `n_test = 48`, `n_eff ≈ 14` at ρ=0.5 → MDD ≈ 33 pp. Costs ~$1 of BLOCK-6 inference, zero impact on the overnight run.
-
-### 5.6 Worked CI example
-
-Trained checkpoint passes `fast_1` on 9 of 24 test tasks → `p̂ = 0.375`. Wilson 95 %:
+True per-task effect `0.18`, op random effects `σ=0.15`, rollout noise `σ=0.25`, `R=8`, `n=200`:
 
 ```
-center = (p̂ + z²/2n)/(1 + z²/n) = (0.375 + 1.92/48)/(1 + 3.84/24) = 0.4152/1.16 = 0.358
-half   = z·sqrt(p̂(1−p̂)/n + z²/4n²)/(1+z²/n)
-       = 1.96·sqrt(0.2344/24 + 3.84/2304)/1.16 = 1.96·0.1027/1.16 = 0.174
-CI_95 ≈ [0.184, 0.532].
+Gap (mean Δ) = 0.156     95% CI = [0.136, 0.174]   (excludes 0)
+across-op sign test: 5/5 ops positive, p_one_sided = 0.031
+observed d_z = 1.31   vs   MDE d_z @ n=200 = 0.198   →  POWERED
 ```
 
-A base rate of 0.20 lies inside this interval → a `0.375 − 0.20 = 17.5 pp` gap is **not** significant at n=24 — exactly the underpowering §5.5 warns about.
+The identical effect at the old `n=3`/`n=24` (MDE `d_z` 1.62 / 0.57) is undetectable / clustering-fragile; at
+`n=200` paired it is unambiguous and the sign test gives a ρ-free p a judge cannot wave away. Cost: ~`200·R`
+eval-time rollouts only — **zero** impact on the overnight training run.
 
 ---
 

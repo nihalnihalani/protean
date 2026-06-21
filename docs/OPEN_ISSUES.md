@@ -1,6 +1,15 @@
 # Protean — Open Issues & Devil's-Advocate Findings
 
-> Surfaced by the `protean-technical-depth` workflow (26 agents). Stub-level ImportError bugs flagged here were FIXED in commit (sampler/manifest/shape_sampler imports). The remaining items are design/implementation risks tracked for build day. Severity 1–5.
+> Surfaced by the `protean-technical-depth` workflow (26 agents). The remaining items are design/implementation risks tracked for build day. Severity 1–5.
+
+## ✅ RESOLVED
+- **Statistical underpowering of the generalization claim (the "n=24" item).** Fixed in `src/protean/eval_protocol.py`
+  + the continuous held-out sampler in `splits.py`, documented in TECHNICAL_SPEC §5.4–5.6: **200 paired held-out
+  tasks** (5 ops × 40 *continuous* off-grid shapes, >170 distinct sizes), per-task **continuous-reward** delta,
+  **hierarchical bootstrap** CI, and a clustering-immune **across-op sign test** (5/5 ops → p=0.031). MDE `d_z`:
+  **1.62 @ n=3 → 0.20 @ n=200**. Verified by `tests/test_eval_protocol.py` (5 tests) + the module self-test
+  (Gap=0.156, 95% CI [0.136, 0.174] excludes 0, POWERED). Additive: the MVP's 3+3 dev shapes + existing tests
+  are untouched.
 
 
 ## Round 2 — math/verifier attacks
