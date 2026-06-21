@@ -58,7 +58,7 @@ candidate source
   - `policy.py` proposes kernel edits.
   - `rl_layer.py` scores and accepts candidates.
   - `harness.py` owns benchmark knobs the agent can tune.
-  - `tiny_policy.py` trains the v1 learned policy head from verifier traces.
+  - `tiny_policy.py` trains the v1 1M-parameter learned policy head from verifier traces.
   - `prompts/` and `configs/` hold the model prompt contract and active policy config.
   - The current edit policy is deterministic; a model-backed policy should replace it next.
 
@@ -79,7 +79,7 @@ candidate source
   - Writes `runs/protean-overnight/best_kernel.py`, `trials.jsonl`, and `summary.json`.
 
 - `scripts/train_tiny_policy.py`
-  - Trains the v1 tiny policy head from `trials.jsonl`.
+  - Trains the v1 1M-parameter policy head from `trials.jsonl`.
   - Writes `runs/protean-overnight/tiny_policy.json`.
 
 ## Spark Runtime
@@ -104,7 +104,7 @@ Spark has already produced a real held-out delta for `elementwise_add_relu`.
 
 Add features in this order only:
 
-1. Use the tiny policy head as the default learned edit policy after enough traces exist.
+1. Use the 1M policy head as the default learned edit policy after enough traces exist.
 2. Model-backed kernel edit policy in `src/protean/model/policy.py`.
 3. Self-improvement policy for `src/protean/model/rl_layer.py` and `src/protean/model/harness.py`.
 4. `rmsnorm` as the second op.

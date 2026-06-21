@@ -83,7 +83,7 @@ def run_optimization(
 
         for round_idx in range(max_rounds):
             edits = (
-                learned_kernel_edits(best_source, best_score, str(policy_path))
+                learned_kernel_edits(best_source, best_summary, str(policy_path))
                 if policy_path is not None
                 else local_kernel_edits(best_source)
             )
@@ -92,6 +92,7 @@ def run_optimization(
                 candidate_path = candidate_dir / f"{trial_count:04d}_{edit.name}.py"
                 candidate_path.write_text(edit.source)
                 before_score = best_score
+                before_summary = best_summary
                 candidate_summary = evaluate_kernel(
                     edit.source,
                     reps=int(edit.harness["reps"]),
@@ -121,6 +122,7 @@ def run_optimization(
                             "model_cost_usd": edit.model_cost_usd,
                             "tokens": edit.tokens,
                             "best_score_before": before_score,
+                            "best_summary_before": before_summary,
                             "score": candidate_score,
                             "delta_vs_best": score_delta(candidate_score, before_score),
                             "accepted": accepted,

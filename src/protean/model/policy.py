@@ -44,19 +44,19 @@ def local_kernel_edits(current_best: str) -> Iterable[CandidateEdit]:
         )
 
 
-def learned_kernel_edits(current_best: str, best_score: tuple[float, float, int], policy_path: str) -> Iterable[CandidateEdit]:
-    """Order deterministic edits with a trained tiny policy head."""
+def learned_kernel_edits(current_best: str, best_state: dict | tuple[float, float, int], policy_path: str) -> Iterable[CandidateEdit]:
+    """Order deterministic edits with a trained policy head."""
 
     policy = TinyPolicyHead.load(policy_path)
     edits = list(local_kernel_edits(current_best))
     by_action = {action_index(edit.name): edit for edit in edits}
-    for action in policy.ranked_actions(state_features(best_score)):
+    for action in policy.ranked_actions(state_features(best_state)):
         edit = by_action.get(action)
         if edit is not None:
             block_size = ACTION_BLOCK_SIZES[action]
             yield CandidateEdit(
                 name=edit.name,
-                reason=f"Tiny policy head selected block size {block_size}.",
+                reason=f"Learned policy head selected block size {block_size}.",
                 source=edit.source,
                 harness=edit.harness,
                 policy="tiny_policy_head",

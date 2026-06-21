@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Train the v1 tiny policy head from optimizer verifier traces."""
+"""Train the v1 small policy head from optimizer verifier traces."""
 
 from __future__ import annotations
 

@@ -1,4 +1,4 @@
-"""Tiny learned policy head trained from verifier traces.
+"""Small learned policy head trained from verifier traces.
 
 The policy chooses the next kernel-edit action. It is intentionally dependency
 free so the hackathon demo can train it anywhere the verifier runs.
@@ -14,7 +14,8 @@ from dataclasses import dataclass
 from pathlib import Path
 
 ACTION_BLOCK_SIZES = (128, 256, 512, 1024, 2048)
-DEFAULT_HIDDEN_DIM = 12_800
+FEATURE_DIM = 10
+DEFAULT_HIDDEN_DIM = 62_500
 
 
 def action_index(edit_name: str) -> int | None:
@@ -27,12 +28,50 @@ def action_index(edit_name: str) -> int | None:
     return ACTION_BLOCK_SIZES.index(block_size)
 
 
-def state_features(best_score: list | tuple) -> list[float]:
-    held_out_speedup, reward, correct_held_out = best_score
+def _mean(values: list[float]) -> float:
+    return sum(values) / len(values) if values else 0.0
+
+
+def state_features(state: dict | list | tuple) -> list[float]:
+    if isinstance(state, dict):
+        rows = state.get("rows", [])
+        train_speedups = [
+            float(row.get("speedup", 0.0))
+            for row in rows
+            if row.get("split") == "train" and row.get("correct") and not row.get("caps")
+        ]
+        held_out_speedups = [
+            float(row.get("speedup", 0.0))
+            for row in rows
+            if row.get("split") == "held_out" and row.get("correct") and not row.get("caps")
+        ]
+        mean_train_speedup = _mean(train_speedups)
+        mean_held_out_speedup = float(state.get("mean_held_out_speedup", _mean(held_out_speedups)))
+        cap_rate = sum(1 for row in rows if row.get("caps")) / len(rows) if rows else 0.0
+        return [
+            mean_held_out_speedup / 4.0,
+            float(state.get("mean_reward", 0.0)) / 2.0,
+            float(state.get("correct_held_out", 0.0)) / 3.0,
+            mean_train_speedup / 4.0,
+            (min(held_out_speedups) if held_out_speedups else 0.0) / 4.0,
+            (max(held_out_speedups) if held_out_speedups else 0.0) / 4.0,
+            (mean_held_out_speedup - mean_train_speedup) / 4.0,
+            cap_rate,
+            min(len(rows), 10) / 10.0,
+            1.0,
+        ]
+
+    held_out_speedup, reward, correct_held_out = state
     return [
         float(held_out_speedup) / 4.0,
         float(reward) / 2.0,
         float(correct_held_out) / 3.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
         1.0,
     ]
 
@@ -55,14 +94,14 @@ class TraceExample:
 class TinyPolicyHead:
     """One-hidden-layer policy head.
 
-    Default parameter count is 128,005:
-    input 4 -> hidden 12,800 -> 5 actions, with biases.
+    Default parameter count is 1,000,005:
+    input 10 -> hidden 62,500 -> 5 actions, with biases.
     """
 
     def __init__(
         self,
         *,
-        input_dim: int = 4,
+        input_dim: int = FEATURE_DIM,
         hidden_dim: int = DEFAULT_HIDDEN_DIM,
         action_dim: int = len(ACTION_BLOCK_SIZES),
         seed: int = 7,
@@ -193,7 +232,7 @@ def load_trace_examples(trace_path: str | Path) -> list[TraceExample]:
             continue
         examples.append(
             TraceExample(
-                features=state_features(row["best_score_before"]),
+                features=state_features(row.get("best_summary_before", row["best_score_before"])),
                 action=idx,
                 advantage=advantage_from_delta(row.get("delta_vs_best", {})),
             )

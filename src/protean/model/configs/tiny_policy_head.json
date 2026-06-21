@@ -1,12 +1,18 @@
 {
   "policy": "tiny_policy_head",
   "goal": "learn which kernel edit to try next from verifier traces",
-  "parameter_count_default": 128005,
-  "hidden_dim_default": 12800,
+  "parameter_count_default": 1000005,
+  "hidden_dim_default": 62500,
   "inputs": [
     "current_best_held_out_speedup",
     "current_best_reward",
     "current_best_correct_held_out_count",
+    "current_best_train_speedup",
+    "current_best_min_held_out_speedup",
+    "current_best_max_held_out_speedup",
+    "train_vs_held_out_gap",
+    "cap_rate",
+    "shape_count",
     "bias"
   ],
   "actions": [
@@ -17,5 +23,5 @@
     "block_size_2048"
   ],
   "training_signal": "delta_vs_best from trials.jsonl",
-  "runtime_target": "5-20 minutes for live hackathon traces"
+  "runtime_target": "10-20 minutes for live hackathon traces"
 }
