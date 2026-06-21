@@ -204,7 +204,7 @@ HUD platform deployment:
 - requested environment: https://hud.ai/environments/9907b272-ef58-4f57-9cd3-5dbcb37dd51e
 - requested taskset: https://hud.ai/tasksets/6d2feb10-b23c-4928-a1f9-e8b53db364d7
 - active verified environment: https://hud.ai/environments/32bb1f0c-0737-4a58-8a5e-5c9ec8a2f01b
-- active verified taskset: https://hud.ai/tasksets/3f2d2423-72d4-4541-bb18-b78e31151676
+- active verified live job: https://www.hud.ai/jobs/86135951-de85-4b53-87da-495077057551
 - active all-ops grouped job: https://hud.ai/jobs/3eda0cb665df40f6a3f25a89460819ae
 
 Powered held-out evaluation:

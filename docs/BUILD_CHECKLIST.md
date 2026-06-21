@@ -159,7 +159,7 @@ Verified HUD platform artifacts:
 environment: https://hud.ai/environments/9907b272-ef58-4f57-9cd3-5dbcb37dd51e
 taskset:     https://hud.ai/tasksets/6d2feb10-b23c-4928-a1f9-e8b53db364d7
 active env:  https://hud.ai/environments/32bb1f0c-0737-4a58-8a5e-5c9ec8a2f01b
-active set:  https://hud.ai/tasksets/3f2d2423-72d4-4541-bb18-b78e31151676
+active job:  https://www.hud.ai/jobs/86135951-de85-4b53-87da-495077057551
 deploy:      image version 1, v6 control channel introspection OK
 sync:        taskset source now defines 1008 rows under the active HUD key
 ```

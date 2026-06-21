@@ -27,7 +27,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
               <Link href="/">Live</Link>
               <Link href="/runs">Runs</Link>
               <Link href="/ops/rmsnorm">Ops</Link>
-              <a href="https://www.hud.ai/tasksets/6d2feb10-b23c-4928-a1f9-e8b53db364d7" target="_blank">
+              <a href="https://www.hud.ai/jobs/86135951-de85-4b53-87da-495077057551" target="_blank">
                 HUD
               </a>
               <span className="badge">

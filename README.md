@@ -31,7 +31,7 @@ Protean turns GPU-kernel optimization into a live eval loop: a coding agent edit
 |---|---|---|
 | Production dashboard | <https://protean-khaki.vercel.app> | Speedup curve rising, latency falling, accepted/rejected candidate history, GPU samples, Blob-backed source artifact |
 | Latest showcase run | <https://protean-khaki.vercel.app/runs/live-showcase-20260621-124855> | 24 trial rows, 17 accepted, 7 rejected, best speedup `4.62x`, best latency `0.031 ms` |
-| HUD control plane | <https://hud.ai/tasksets/3f2d2423-72d4-4541-bb18-b78e31151676> | Stable taskset rows for verifier-backed kernel tasks |
+| HUD live job | <https://www.hud.ai/jobs/86135951-de85-4b53-87da-495077057551> | Real optimizer traces streamed from the B200 run |
 | Demo video | <https://youtu.be/qDc0QZqu7q4> | End-to-end visual walkthrough |
 
 The important behavior is not a single hand-picked number. It is the loop: incorrect kernels get `0`, correct-but-slower kernels are logged but not accepted, and faster correct kernels push the best-so-far curve upward.
@@ -328,7 +328,7 @@ Verified showcase run:
 | Artifact | Purpose |
 |---|---|
 | [Current HUD environment](https://hud.ai/environments/32bb1f0c-0737-4a58-8a5e-5c9ec8a2f01b) | Deployed and introspected Protean HUD environment with 3 templates |
-| [Current HUD taskset](https://hud.ai/tasksets/3f2d2423-72d4-4541-bb18-b78e31151676) | Synced `protean-kernel-optimizer` taskset; current source defines 1008 rows |
+| [Current HUD live job](https://www.hud.ai/jobs/86135951-de85-4b53-87da-495077057551) | Real optimizer job with B200 trial traces |
 | [Requested HUD environment](https://hud.ai/environments/9907b272-ef58-4f57-9cd3-5dbcb37dd51e) | Earlier public environment URL supplied for the demo |
 | [Requested HUD taskset](https://hud.ai/tasksets/6d2feb10-b23c-4928-a1f9-e8b53db364d7) | Earlier public taskset URL supplied for the demo |
 | [HUD all-ops grouped live job](https://hud.ai/jobs/3eda0cb665df40f6a3f25a89460819ae) | Spark `group=2` live optimizer run across all three ops |

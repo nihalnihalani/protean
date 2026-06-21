@@ -23,7 +23,7 @@ export const seedRuns: RunRecord[] = [
     status: "completed",
     startedAt: new Date(Date.now() - 7 * 60 * 60_000).toISOString(),
     endedAt: new Date(Date.now() - 6.6 * 60 * 60_000).toISOString(),
-    hudJobUrl: "https://www.hud.ai/tasksets/6d2feb10-b23c-4928-a1f9-e8b53db364d7",
+    hudJobUrl: "https://www.hud.ai/jobs/86135951-de85-4b53-87da-495077057551",
     gitSha: "c8e96db",
     policy: "local",
     controller: "1m-policy-head",
