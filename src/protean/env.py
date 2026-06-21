@@ -81,9 +81,9 @@ def _make_env():
     if Environment is None:
         return None
     try:
-        return Environment(id="protean")
-    except TypeError:  # pragma: no cover - compatibility with older local HUD builds.
         return Environment(name="protean")
+    except TypeError:  # pragma: no cover - compatibility with older local HUD builds.
+        return Environment(id="protean")
 
 
 env = _make_env()
@@ -111,9 +111,20 @@ if env is not None:
         yield to_eval_result(grade_hud_source(source or "", op="rmsnorm", split=split, shape=shape))
 
     elementwise_add_relu_train = elementwise_add_relu(split="train")
+    elementwise_add_relu_train.slug = "elementwise_add_relu_train"
+    elementwise_add_relu_train.columns = {"op": "elementwise_add_relu", "split": "train"}
+
     elementwise_add_relu_held_out = elementwise_add_relu(split="held_out")
+    elementwise_add_relu_held_out.slug = "elementwise_add_relu_held_out"
+    elementwise_add_relu_held_out.columns = {"op": "elementwise_add_relu", "split": "held_out"}
+
     rmsnorm_train = rmsnorm(split="train")
+    rmsnorm_train.slug = "rmsnorm_train"
+    rmsnorm_train.columns = {"op": "rmsnorm", "split": "train"}
+
     rmsnorm_held_out = rmsnorm(split="held_out")
+    rmsnorm_held_out.slug = "rmsnorm_held_out"
+    rmsnorm_held_out.columns = {"op": "rmsnorm", "split": "held_out"}
 else:
     elementwise_add_relu = {"id": "elementwise_add_relu", "op": "elementwise_add_relu"}
     rmsnorm = {"id": "rmsnorm", "op": "rmsnorm"}
@@ -121,8 +132,9 @@ else:
         globals()[_task_def["id"]] = dict(_task_def)
 
 
-# Backward-compatible alias used by older imports.
-kernel_opt = elementwise_add_relu_train
+# Backward-compatible metadata alias used by older imports. Keep it non-Task so
+# HUD task discovery does not count it as a duplicate public task.
+kernel_opt = {"id": "elementwise_add_relu_train", "op": "elementwise_add_relu", "split": "train"}
 
 
 def main() -> int:

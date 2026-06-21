@@ -34,14 +34,14 @@ def test_task_metadata_lists_prompt_paths():
     assert all(row["prompt_path"].endswith("prompt.md") for row in rows)
 
 
-def test_hud_registration_uses_id_api():
+def test_hud_registration_uses_name_api():
     import protean.env as env_mod
 
-    calls = {"env_ids": [], "template_ids": []}
+    calls = {"env_names": [], "template_ids": []}
 
     class FakeEnvironment:
-        def __init__(self, *, id):
-            calls["env_ids"].append(id)
+        def __init__(self, *, name):
+            calls["env_names"].append(name)
 
         def template(self, *, id):
             calls["template_ids"].append(id)
@@ -68,5 +68,5 @@ def test_hud_registration_uses_id_api():
         env_mod.Environment = original_environment
         env_mod.env = original_env
 
-    assert calls["env_ids"] == ["protean"]
+    assert calls["env_names"] == ["protean"]
     assert calls["template_ids"] == ["elementwise_add_relu", "rmsnorm"]

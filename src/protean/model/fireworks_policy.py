@@ -67,6 +67,26 @@ Current best source:
 """
 
 
+def build_fireworks_payload(
+    prompt: str,
+    *,
+    model: str = DEFAULT_FIREWORKS_MODEL,
+    max_tokens: int = 4096,
+    temperature: float = 0.2,
+) -> dict[str, Any]:
+    return {
+        "model": model,
+        "messages": [
+            {"role": "system", "content": "You return strict JSON and no extra prose."},
+            {"role": "user", "content": prompt},
+        ],
+        "temperature": temperature,
+        "max_tokens": max_tokens,
+        "response_format": {"type": "json_object"},
+        "reasoning_effort": "low",
+    }
+
+
 def call_fireworks_chat(
     prompt: str,
     *,
@@ -80,15 +100,12 @@ def call_fireworks_chat(
     if not key:
         raise RuntimeError("FIREWORKS_API_KEY is required for Fireworks-backed edits")
 
-    payload = {
-        "model": model,
-        "messages": [
-            {"role": "system", "content": "You return strict JSON and no extra prose."},
-            {"role": "user", "content": prompt},
-        ],
-        "temperature": temperature,
-        "max_tokens": max_tokens,
-    }
+    payload = build_fireworks_payload(
+        prompt,
+        model=model,
+        max_tokens=max_tokens,
+        temperature=temperature,
+    )
     req = urllib.request.Request(
         f"{base_url.rstrip('/')}/chat/completions",
         data=json.dumps(payload).encode("utf-8"),
