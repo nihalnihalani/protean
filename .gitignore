@@ -11,4 +11,4 @@ checkpoints/
 runs/
 wandb/
 triton-cache/
-manifest_*.jsonl
+# manifest_v1.jsonl is a VERSIONED artifact — DO NOT ignore it (Step 11 reproducibility)

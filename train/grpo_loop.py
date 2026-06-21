@@ -20,10 +20,10 @@ from datasets import Dataset
 from transformers import TrainerCallback
 
 from reward import _extract_code, _load_grade
-from callbacks import CostAbortCallback
+from callbacks import CostAbortCallback, RewardCurveLogger
 from calibrate import calibrate
 from protean.tasks import TASKS
-from protean.shape_sampler import sample_shape
+from protean.shape_sampler import sample_shape, l1_curriculum_pool, sample_shape_curriculum
 from protean.task_catalog import OPS_BY_NAME
 
 # Reference step counter to allow dynamic reward adjustments if needed
@@ -56,13 +56,23 @@ def dynamic_reward_fn(prompts, completions, op, M, N, dtype, **kwargs):
             
     return rewards
 
-def build_dataset():
+def build_dataset(step=0, max_steps=150):
+    """Build the GRPO training dataset from the frozen manifest.
+    
+    Step 11: reads M/N directly from the manifest (via task.columns) when
+    available, so the training shapes exactly match the frozen manifest_v1.jsonl.
+    Falls back to curriculum-aware sampling only when the manifest doesn't
+    include shape data (e.g. dynamic generation in local dev mode).
+    
+    Held-out tasks always use the full TEST_M pool (moat invariant).
+    """
     data = {
         "prompt": [],
         "op": [],
         "M": [],
         "N": [],
         "dtype": [],
+        "split": [],
     }
     
     for task in TASKS:
@@ -70,7 +80,14 @@ def build_dataset():
         split = task.columns["split"]
         seed = int(task.columns["seed"])
         
-        M, N = sample_shape(op_name, split, seed)
+        # Prefer manifest M/N (step 11: reproducibility). Fall back to
+        # curriculum-aware sampling if the manifest didn't include shapes
+        # (e.g. dynamic generation via PROTEAN_ALLOW_DYNAMIC_MANIFEST=1).
+        if "M" in task.columns and "N" in task.columns:
+            M = int(task.columns["M"])
+            N = int(task.columns["N"])
+        else:
+            M, N = sample_shape_curriculum(op_name, split, seed, step=step, max_steps=max_steps)
         op_spec = OPS_BY_NAME[op_name]
         
         # Read the prompt template
@@ -83,8 +100,10 @@ def build_dataset():
         data["M"].append(M)
         data["N"].append(N)
         data["dtype"].append("fp16")
+        data["split"].append(split)
         
     return Dataset.from_dict(data)
+
 
 def build_grpo_configs():
     """Build the GRPOConfig and LoraConfig for training.
@@ -147,9 +166,105 @@ def build_grpo_configs():
         
     return cfg, peft_config
 
+def _make_held_out_eval_fn(trainer, dataset_heldout):
+    """Build the held-out eval closure that the callback calls every N steps.
+    
+    Uses the trainer's current model (with LoRA weights applied at this step) to
+    generate completions for held-out tasks, then grades them through the canonical
+    grade_kernel path. Returns (mean_reward, std_reward) across all held-out rollouts.
+    """
+    from reward import _extract_code, _load_grade
+    import numpy as np
+    
+    def eval_fn(step: int, n_per_op: int) -> tuple:
+        # Sample n_per_op held-out tasks
+        held_out_rows = [row for row in dataset_heldout if row["split"] == "held_out"]
+        sample = held_out_rows[:n_per_op * 5]  # 5 ops; cap on total eval rollouts
+        
+        rewards = []
+        for row in sample:
+            op_name = row["op"]
+            # Generate ONE completion for this held-out task — held-out is just a probe,
+            # not a training rollout, so we don't need num_generations samples.
+            prompt = row["prompt"]
+            # Use trainer.model + tokenizer for inference. Inside vLLM-colocated trl,
+            # the trainer exposes the underlying model.
+            tokenizer = getattr(trainer, "tokenizer", None) or getattr(trainer, "processing_class", None)
+            if tokenizer is None:
+                raise AttributeError("Trainer has neither tokenizer nor processing_class")
+            inputs = tokenizer(prompt, return_tensors="pt").to(trainer.model.device)
+            with torch.no_grad():
+                output_ids = trainer.model.generate(
+                    **inputs,
+                    max_new_tokens=1024,
+                    do_sample=False,  # greedy for deterministic held-out
+                    pad_token_id=tokenizer.eos_token_id,
+                )
+            completion = tokenizer.decode(
+                output_ids[0][inputs["input_ids"].shape[1]:],
+                skip_special_tokens=True
+            )
+            
+            # Grade via the canonical path
+            try:
+                gm = _load_grade(op_name)
+                src = _extract_code(completion)
+                res = gm.grade_kernel(
+                    op_name, int(row["M"]), int(row["N"]), row["dtype"], src, step=step
+                )
+                rewards.append(float(res.get("reward", 0.0)))
+            except Exception as e:
+                print(f"[protean] Held-out grade failed for {op_name}: {e}")
+                rewards.append(0.0)
+        
+        if not rewards:
+            return (0.0, 0.0)
+        return (float(np.mean(rewards)), float(np.std(rewards)))
+    
+    return eval_fn
+
+def _make_base_model_runner(trainer):
+    """Build the base-model rollout closure for calibrate() Stage A/B.
+    
+    Uses sampling (temperature=0.8, top_p=0.95) — NOT greedy — because the
+    calibration gate needs to measure the *distribution* of model outputs
+    (compile rate, allclose rate, reward std). Greedy would produce a single
+    deterministic completion per prompt, making std measurements meaningless.
+    
+    Must be called AFTER trainer construction so we close over trainer.model.
+    """
+    def runner(prompt: str) -> list:
+        tokenizer = getattr(trainer, "tokenizer", None) or getattr(trainer, "processing_class", None)
+        if tokenizer is None:
+            raise AttributeError("Trainer has neither tokenizer nor processing_class")
+        inputs = tokenizer(prompt, return_tensors="pt").to(trainer.model.device)
+        
+        completions = []
+        # Generate 4 completions per prompt for calibration diversity
+        for _ in range(4):
+            with torch.no_grad():
+                output_ids = trainer.model.generate(
+                    **inputs,
+                    max_new_tokens=1024,
+                    do_sample=True,
+                    temperature=0.8,
+                    top_p=0.95,
+                    pad_token_id=tokenizer.eos_token_id,
+                )
+            completion = tokenizer.decode(
+                output_ids[0][inputs["input_ids"].shape[1]:],
+                skip_special_tokens=True
+            )
+            completions.append(completion)
+        return completions
+    
+    return runner
+
 def main():
-    # 1. Prepare dataset
-    dataset = build_dataset()
+    # 1. Prepare dataset (L1 curriculum: step=0 uses smallest shapes)
+    max_steps = int(os.environ.get("PROTEAN_MAX_STEPS", "150"))
+    dataset = build_dataset(step=0, max_steps=max_steps)
+    print(f"[protean] L1 curriculum: initial pool = {l1_curriculum_pool(0, max_steps)}")
     
     # 2. Run calibration
     print("Running calibration preflight...")
@@ -165,13 +280,34 @@ def main():
         print("[protean] WARNING: CUDA is available but vLLM is force-disabled via PROTEAN_DISABLE_VLLM.")
         print("[protean] WARNING: Training throughput will be 5-10× lower. This is fine for debugging but")
         print("[protean] WARNING: NOT suitable for the overnight GRPO kick.")
-    calibrate(TASKS)
+    # Preflight only (no base_model_runner yet — we haven't built the trainer).
+    # This validates the known-good/known-bad gate and REWARDS_HASH integrity.
+    calibrate(TASKS, base_model_runner=None)
     
     # 3. Model path
     model_name = os.environ.get("SFT_CKPT_PATH", "Qwen/Qwen2.5-Coder-7B-Instruct")
     
     # 4. GRPO Trainer Setup
     cfg, peft_config = build_grpo_configs()
+    
+    # Snapshot the resolved config for the history file
+    config_snapshot = {
+        "max_steps": cfg.max_steps,
+        "num_generations": cfg.num_generations,
+        "max_completion_length": cfg.max_completion_length,
+        "learning_rate": cfg.learning_rate,
+        "use_vllm": cfg.use_vllm,
+    }
+    
+    history_path = os.path.join(cfg.output_dir, "train_history.json")
+    
+    reward_logger = RewardCurveLogger(
+        output_path=history_path,
+        heldout_every=25,
+        heldout_tasks_per_op=4,
+        held_out_eval_fn=None,  # Wired AFTER trainer construction; see below
+        config_snapshot=config_snapshot,
+    )
     
     print(f"[protean] GRPO config:")
     print(f"  max_steps           = {cfg.max_steps}")
@@ -192,10 +328,21 @@ def main():
         model=model_name,
         reward_funcs=[dynamic_reward_fn],
         peft_config=peft_config,
-        callbacks=[cost_callback],
+        callbacks=[cost_callback, reward_logger],
         args=cfg,
         train_dataset=dataset,
     )
+    
+    # NOW we can build the eval function and base model runner with trainer in scope
+    reward_logger.held_out_eval_fn = _make_held_out_eval_fn(trainer, dataset)
+    
+    # Step 9: Wire base-model rollouts into calibrate() for Stage A/B gating.
+    # This runs AFTER trainer construction so _make_base_model_runner can close
+    # over trainer.model. If Stage A/B fails, escalate() will lower reward targets.
+    if os.environ.get("PROTEAN_SKIP_CALIBRATION") != "1":
+        base_runner = _make_base_model_runner(trainer)
+        cal_result = calibrate(TASKS, base_model_runner=base_runner)
+        print(f"[protean] Calibration Stage A/B result: {cal_result}")
     
     class StepTrackerCallback(TrainerCallback):
         def on_step_end(self, args, state, control, **kwargs):

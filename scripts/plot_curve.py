@@ -29,12 +29,34 @@ def main():
         
     if not data:
         # Mock data representing overnight training performance
+        steps = [i * 5 for i in range(41)]
+        train_reward = [0.3 + 0.05 * (step/5)**0.5 + 0.01 * (step%3) for step in steps]
+        train_std = [0.08 - 0.001 * (step/5) for step in steps]
+        
+        heldout_reward = []
+        heldout_std = []
+        for step in steps:
+            if step % 25 == 0:
+                i = step // 25
+                heldout_reward.append(0.3 + 0.035 * (step/5)**0.5 - 0.01 * (i%2))
+                heldout_std.append(0.10 - 0.0015 * (step/5))
+            else:
+                heldout_reward.append(None)
+                heldout_std.append(None)
+                
         data = {
-            "steps": [i * 10 for i in range(21)],
-            "train_reward": [0.3 + 0.05 * i**0.5 + 0.02 * (i%3) for i in range(21)],
-            "train_std": [0.08 - 0.002 * i for i in range(21)],
-            "heldout_reward": [0.3 + 0.035 * i**0.5 - 0.01 * (i%2) for i in range(21)],
-            "heldout_std": [0.10 - 0.0015 * i for i in range(21)],
+            "steps": steps,
+            "train_reward": train_reward,
+            "train_std": train_std,
+            "heldout_reward": heldout_reward,
+            "heldout_std": heldout_std,
+            "config": {
+                "max_steps": 200,
+                "num_generations": 8,
+                "max_completion_length": 1024,
+                "learning_rate": 1e-5,
+                "use_vllm": True
+            }
         }
         with open(history_file, "w") as f:
             json.dump(data, f, indent=2)
@@ -46,10 +68,10 @@ def main():
         for i in range(len(data["steps"])):
             writer.writerow([
                 data["steps"][i], 
-                data["train_reward"][i], 
-                data["train_std"][i], 
-                data["heldout_reward"][i], 
-                data["heldout_std"][i]
+                "" if data["train_reward"][i] is None else data["train_reward"][i], 
+                "" if data["train_std"][i] is None else data["train_std"][i], 
+                "" if data["heldout_reward"][i] is None else data["heldout_reward"][i], 
+                "" if data["heldout_std"][i] is None else data["heldout_std"][i]
             ])
             
     print(f"Generalization data written to: {output_csv}")
@@ -58,19 +80,39 @@ def main():
     if HAS_MATPLOTLIB:
         plt.figure(figsize=(10, 6))
         
+        # Filter out null train entries
+        train_steps = []
+        train_means = []
+        train_stds = []
+        for i, val in enumerate(data["train_reward"]):
+            if val is not None:
+                train_steps.append(data["steps"][i])
+                train_means.append(val)
+                train_stds.append(data["train_std"][i] or 0.0)
+                
         plt.errorbar(
-            data["steps"], 
-            data["train_reward"], 
-            yerr=data["train_std"], 
+            train_steps, 
+            train_means, 
+            yerr=train_stds, 
             label="Train Shapes (256, 512, 1024, 2048)", 
             fmt="-o", 
             capsize=4
         )
         
+        # Filter out null heldout entries
+        heldout_steps = []
+        heldout_means = []
+        heldout_stds = []
+        for i, val in enumerate(data["heldout_reward"]):
+            if val is not None:
+                heldout_steps.append(data["steps"][i])
+                heldout_means.append(val)
+                heldout_stds.append(data["heldout_std"][i] or 0.0)
+                
         plt.errorbar(
-            data["steps"], 
-            data["heldout_reward"], 
-            yerr=data["heldout_std"], 
+            heldout_steps, 
+            heldout_means, 
+            yerr=heldout_stds, 
             label="Held-out Test Shapes (383, 769, 1600)", 
             fmt="--s", 
             capsize=4
