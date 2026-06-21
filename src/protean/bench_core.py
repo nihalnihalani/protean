@@ -31,6 +31,7 @@ from protean.anti_hack import _audit_import_hook as _audit_import_hook  # re-exp
 from protean.anti_hack import (
     contains_triton_jit,
     install_audit_hook,
+    set_audit_armed,
 )
 from protean.task_catalog import OpSpec
 
@@ -135,12 +136,17 @@ def load_solution(src: str) -> types.ModuleType:
     # avoiding the interpreter-bootstrap crash a process-wide eager install causes
     # (stdlib lazily imports importlib.machinery/os, which the hook would block).
     install_audit_hook()
+    # Enforce the import audit hook ONLY while executing untrusted candidate
+    # source; disarm immediately after so the host process and torch/triton
+    # threads (which run during benchmarking, after this returns) are unaffected.
+    set_audit_armed(True)
     try:
         spec.loader.exec_module(module)
         if "solution" not in module.__dict__:
             raise ValueError("candidate must define solution(...)")
         return module
     finally:
+        set_audit_armed(False)
         # Tombstone the candidate so its module name, monkey-patches, and globals
         # cannot survive into the next evaluation round, and remove its temp file
         # so the candidate directory does not accumulate untrusted source. The

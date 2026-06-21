@@ -549,14 +549,24 @@ def test_audit_hook_installed_and_blocks_banned_import():
     # The hook is armed lazily (at load_solution time) to avoid crashing the
     # interpreter bootstrap; install it explicitly here so the assertion does not
     # depend on whether an earlier test happened to call load_solution.
+    from protean.anti_hack import set_audit_armed
+
     bench_core.install_audit_hook()
     assert getattr(sys, "_protean_audit_hook_installed", False) is True
-    for banned in ("base64", "threading", "pickle", "subprocess"):
+    # The hook only enforces inside the candidate-exec window (set_audit_armed),
+    # so the host process + torch threads run unimpeded outside it.
+    set_audit_armed(True)
+    try:
+        for banned in ("base64", "threading", "pickle", "subprocess"):
+            with pytest.raises(ImportError):
+                bench_core._audit_import_hook("import", (banned, None, None, None))
+        # dotted submodule of a banned module is also blocked
         with pytest.raises(ImportError):
-            bench_core._audit_import_hook("import", (banned, None, None, None))
-    # dotted submodule of a banned module is also blocked
-    with pytest.raises(ImportError):
-        bench_core._audit_import_hook("import", ("torch.nn.functional", None, None, None))
+            bench_core._audit_import_hook("import", ("torch.nn.functional", None, None, None))
+    finally:
+        set_audit_armed(False)
+    # Dormant outside the window: a banned import does NOT raise (host/torch safe).
+    bench_core._audit_import_hook("import", ("threading", None, None, None))
 
 
 def test_audit_hook_allows_safe_import():
@@ -758,10 +768,15 @@ def test_audit_hook_blocks_io_and_builtins_roots():
     # The audit-hook backstop mirrors the expanded import-root set: io and builtins
     # must be blocked at runtime too, not only statically.
     import protean.bench_core as bench_core
+    from protean.anti_hack import set_audit_armed
 
-    for banned in ("io", "builtins"):
-        with pytest.raises(ImportError):
-            bench_core._audit_import_hook("import", (banned, None, None, None))
+    set_audit_armed(True)
+    try:
+        for banned in ("io", "builtins"):
+            with pytest.raises(ImportError):
+                bench_core._audit_import_hook("import", (banned, None, None, None))
+    finally:
+        set_audit_armed(False)
 
 
 def test_audit_hook_lives_in_anti_hack_and_is_idempotent():
@@ -777,5 +792,9 @@ def test_audit_hook_lives_in_anti_hack_and_is_idempotent():
     anti_hack.install_audit_hook()
     anti_hack.install_audit_hook()  # idempotent: second call is a no-op
     assert getattr(sys, "_protean_audit_hook_installed", False) is True
-    with pytest.raises(ImportError):
-        anti_hack._audit_import_hook("import", ("subprocess", None, None, None))
+    anti_hack.set_audit_armed(True)
+    try:
+        with pytest.raises(ImportError):
+            anti_hack._audit_import_hook("import", ("subprocess", None, None, None))
+    finally:
+        anti_hack.set_audit_armed(False)

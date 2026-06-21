@@ -3,6 +3,8 @@ from pathlib import Path
 
 import pytest
 
+from protean.env import HUD_TASKS
+from protean.env import Environment as _HudEnvironment
 from protean.manifest import (
     GENERATOR_COMMITTED,
     KNOWN_GENERATORS,
@@ -17,6 +19,7 @@ from protean.manifest import (
 )
 from protean.splits import HELD_OUT_SHAPES, TRAIN_SHAPES
 from protean.tasks import MANIFEST_SHA256, TASKS
+from protean.tasks import tasks as HUD_TASKSET
 
 
 def test_committed_manifest_is_pinned():
@@ -191,3 +194,53 @@ def test_freeze_sidecar_generator_is_known(tmp_path):
     freeze(["elementwise_add_relu"], n_per_split=1, path=path)
     meta = json.loads(meta_path_for(path).read_text())
     assert meta["provenance"]["generator"] in KNOWN_GENERATORS
+
+
+# --- HUD taskset <-> frozen manifest reconciliation ---
+
+
+def test_hud_taskset_exposes_one_task_per_op_split():
+    # The canonical module-level `tasks` list (collected by `hud eval` /
+    # `hud sync`) must expose exactly one entry per (op, split) declared in
+    # HUD_TASKS — the single source of truth for the op/split universe.
+    assert len(HUD_TASKSET) == len(HUD_TASKS) == 6
+    expected_slugs = {t["id"] for t in HUD_TASKS}
+    actual_slugs = {getattr(t, "slug", None) or t.get("id") for t in HUD_TASKSET}
+    assert actual_slugs == expected_slugs
+
+
+def test_hud_taskset_has_no_duplicate_slugs():
+    # HUD's taskset scanner raises on duplicate slugs; guard against regressions
+    # (e.g. re-exporting the intermediates under non-underscored names too).
+    slugs = [getattr(t, "slug", None) or t.get("id") for t in HUD_TASKSET]
+    assert len(slugs) == len(set(slugs)), f"duplicate slugs: {slugs}"
+
+
+@pytest.mark.skipif(
+    _HudEnvironment is None,
+    reason="hud extra not installed; `tasks` holds dict stubs, not Task objects",
+)
+def test_hud_taskset_items_are_real_task_objects_when_hud_present():
+    # When hud IS importable (the deploy/serve image and `hud eval`), every
+    # `tasks` item must be a real HUD Task object, NOT a dict stub. The dual-path
+    # accessor (`getattr(t, "slug", None) or t.get("id")`) in the other
+    # reconciliation tests passes vacuously on dicts, so without this assertion a
+    # regression that left `tasks` holding dicts on the hud path would go
+    # uncaught and break the scanner / any `for t in tasks: t.slug` caller.
+    from hud import Task
+
+    for t in HUD_TASKSET:
+        assert not isinstance(t, dict), f"tasks item is a dict stub, not a Task: {t!r}"
+        assert isinstance(t, Task), f"tasks item is not a HUD Task: {type(t).__name__}"
+        assert hasattr(t, "slug")
+
+
+def test_hud_taskset_and_manifest_cover_the_same_op_split_universe():
+    # The frozen manifest TASKS is the per-(op, split, seed) expansion of the
+    # same op/split pairs the HUD `tasks` list exposes. They must reconcile:
+    # every manifest (op, split) maps to exactly one HUD task and vice versa.
+    manifest_pairs = {(row["op"], row["split"]) for row in TASKS}
+    taskset_pairs = {(t["op"], t["split"]) for t in HUD_TASKS}
+    assert manifest_pairs == taskset_pairs
+    # 72 manifest rows = 6 (op, split) groups x 12 seeds.
+    assert len(TASKS) == len(taskset_pairs) * 12 == 72

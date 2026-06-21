@@ -1,17 +1,69 @@
-"""HUD streaming helpers for optimizer trials."""
+"""HUD streaming helpers for optimizer trials.
 
-from __future__ import annotations
+Public surface
+--------------
+Two layers are exposed:
+
+* Pure-async coroutines -- :func:`_start_session_async` and
+  :func:`_stream_candidate_async`. Call these directly from inside an existing
+  event loop (e.g. an async optimizer, a notebook, or a server handler). They
+  never touch :func:`asyncio.run`, so they compose cleanly with any caller's
+  loop.
+* Sync shims -- :func:`start_hud_stream_session` and
+  :func:`stream_candidate_to_hud`. These are convenience wrappers for plain
+  synchronous code. They drive the coroutine to completion via :func:`_run_sync`,
+  which only calls :func:`asyncio.run` when *no* loop is already running. If a
+  loop is already running the work is dispatched to a dedicated worker thread
+  with its own loop, so the sync shims never raise
+  ``RuntimeError: asyncio.run() cannot be called from a running event loop``.
+
+The ``group`` argument
+----------------------
+``group`` is currently **logging / bookkeeping only**. It is forwarded to the
+HUD ``Job`` and rollout calls so trials can be visually grouped in the HUD
+dashboard, but it is **not** wired into any reinforcement-learning advantage
+computation: the HUD ``TrainingClient`` (GRPO-style group-relative advantage)
+path is intentionally not connected here. Treat ``group`` as a tag, not as a
+training signal.
+"""
 
 import asyncio
+import concurrent.futures
 import os
 import time
+from collections.abc import Coroutine
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, TypeVar
+
+_T = TypeVar("_T")
 
 
 class HudStreamError(RuntimeError):
     """Raised when a trial cannot be streamed to HUD."""
+
+
+def _run_sync(coro: Coroutine[Any, Any, _T]) -> _T:
+    """Drive ``coro`` to completion from synchronous code, loop-safe.
+
+    When there is no running event loop in the current thread, this is just
+    :func:`asyncio.run`. When a loop *is* already running (notebooks, async
+    callers that reached this sync shim by mistake), calling ``asyncio.run``
+    would raise ``RuntimeError``; instead the coroutine is executed on a
+    dedicated worker thread that owns a fresh loop. ``asyncio.run`` is therefore
+    only ever invoked where no loop is active.
+    """
+
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        # No loop running in this thread -- the common, fast path.
+        return asyncio.run(coro)
+
+    # A loop is already running here; run the coroutine in its own thread/loop.
+    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+        future = pool.submit(asyncio.run, coro)
+        return future.result()
 
 
 @dataclass
@@ -142,21 +194,32 @@ def _row_from_run(slug: str, run: Any) -> dict[str, Any]:
     }
 
 
-async def _start_session_async(name: str, group: int) -> HudStreamSession:
+async def _start_session_async(name: str, group: int = 1) -> HudStreamSession:
+    """Async: open one HUD job. Safe to await from inside an existing loop.
+
+    ``group`` is logging-only (see module docstring): it tags the HUD job for
+    dashboard grouping and is not used for any advantage/training computation.
+    """
+
     assert_hud_auth()
     from hud.eval import Job
 
-    assert_hud_auth()
     job = await Job.start(name, group=group)
     return HudStreamSession(job=job, name=name, group=group)
 
 
 def start_hud_stream_session(*, name: str | None = None, group: int = 1) -> HudStreamSession:
-    """Create one HUD job for a whole optimizer run."""
+    """Create one HUD job for a whole optimizer run (sync shim).
+
+    Prefer awaiting :func:`_start_session_async` directly when you already have
+    an event loop. This wrapper is loop-safe via :func:`_run_sync`.
+
+    ``group`` is logging-only (see module docstring).
+    """
 
     assert_hud_auth()
     job_name = name or f"protean-optimizer-{int(time.time())}"
-    return asyncio.run(_start_session_async(job_name, group))
+    return _run_sync(_start_session_async(job_name, group))
 
 
 async def _stream_candidate_async(
@@ -179,12 +242,17 @@ async def _stream_candidate_async(
     session: HudStreamSession | None,
     group: int,
 ) -> dict[str, Any]:
+    """Async: stream one candidate trial. Safe to await from inside a loop.
+
+    ``group`` is logging-only (see module docstring): it tags the rollout for
+    dashboard grouping; the HUD ``TrainingClient`` advantage path is not wired.
+    """
+
     assert_hud_auth()
     from hud.agents.base import Agent
     from hud.eval import LocalRuntime, Taskset
     from hud.types import Step
 
-    assert_hud_auth()
     metrics = _summary_metrics(summary, eval_error)
 
     class CandidateAgent(Agent):
@@ -355,13 +423,21 @@ def stream_candidate_to_hud(
     session: HudStreamSession | None = None,
     group: int = 1,
 ) -> dict[str, Any]:
-    """Stream one optimizer trial candidate into HUD."""
+    """Stream one optimizer trial candidate into HUD (sync shim).
+
+    Prefer awaiting :func:`_stream_candidate_async` directly when you already
+    have an event loop. This wrapper is loop-safe via :func:`_run_sync` and will
+    not raise the nested-event-loop ``RuntimeError``.
+
+    ``group`` is logging-only (see module docstring): the HUD ``TrainingClient``
+    advantage path is intentionally not wired here.
+    """
 
     assert_hud_auth()
     env_path = Path(env_source)
     if not env_path.exists():
         raise HudStreamError(f"HUD env source does not exist: {env_path}")
-    return asyncio.run(
+    return _run_sync(
         _stream_candidate_async(
             source=source,
             op=op,

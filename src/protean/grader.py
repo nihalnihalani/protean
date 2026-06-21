@@ -1,6 +1,13 @@
 """Direct grader used by HUD, scripts, and future training code."""
 
-from __future__ import annotations
+# NOTE: this file deliberately omits ``from __future__ import annotations`` (kept in sync
+# with env.py). grader.py defines NO ``@env.template`` functions, so the HUD TypeAdapter
+# crash from env.py's comment block does not apply here today. But removing the import keeps
+# annotation-evaluation symmetric across the two modules and closes the surface: if a graded
+# coroutine is ever decorated with ``@env.template`` here, a lingering future-import would
+# silently reintroduce the deploy-time PydanticUserError (-32000). Python 3.12 resolves
+# ``int | None``/``str | None`` natively (PEP 604), so removal is runtime-safe. Do NOT add
+# the future-import back; see env.py's comment block for the full rationale.
 
 import importlib.util
 import logging
@@ -233,7 +240,9 @@ class _SubScoreProto(Protocol):
 
 
 class _SubScoreFactory(Protocol):
-    def __call__(self, *, name: str, value: float, weight: float) -> _SubScoreProto: ...
+    def __call__(
+        self, *, name: str, value: float, weight: float, metadata: dict[str, Any] | None = ...
+    ) -> _SubScoreProto: ...
 
 
 class _EvalResultProto(Protocol):
@@ -243,7 +252,15 @@ class _EvalResultProto(Protocol):
 
 
 class _EvalResultFactory(Protocol):
-    def __call__(self, *, reward: float, subscores: list[Any], info: dict[str, Any]) -> _EvalResultProto: ...
+    def __call__(
+        self,
+        *,
+        reward: float,
+        subscores: list[Any],
+        info: dict[str, Any],
+        done: bool = ...,
+        content: str | None = ...,
+    ) -> _EvalResultProto: ...
 
 
 # Local dataclass stand-ins used only when HUD is not installed. Defined at module
@@ -256,6 +273,7 @@ class _FallbackSubScore:
     name: str
     value: float
     weight: float
+    metadata: dict[str, Any] | None = None
 
 
 @dataclass
@@ -263,6 +281,8 @@ class _FallbackEvalResult:
     reward: float
     subscores: list[Any]
     info: dict[str, Any]
+    done: bool = True
+    content: str | None = None
 
 
 def _eval_result_classes() -> tuple[_EvalResultFactory, _SubScoreFactory]:
@@ -286,30 +306,108 @@ def _eval_result_classes() -> tuple[_EvalResultFactory, _SubScoreFactory]:
     return cast("_EvalResultFactory", EvaluationResult), cast("_SubScoreFactory", SubScore)
 
 
+def _reward_ceiling() -> float:
+    """Resolve the raw-reward ceiling used to normalise into HUD's [0, 1] range.
+
+    ``compute_reward`` returns a reward in ``[0, config.max_reward]`` (default
+    ``2.0``), but HUD's ``EvaluationResult.reward`` is conventionally ``[0, 1]``.
+    The normaliser therefore divides by ``max_reward`` rather than a hardcoded
+    ``2.0`` so that a production ``reward_config.json`` changing ``max_reward``
+    cannot silently push HUD rewards above 1.0 (or compress them). Degrades to
+    ``DEFAULT_CONFIG.max_reward`` if the on-disk config is missing/unreadable --
+    matching ``grade_source``'s graceful-degradation contract.
+    """
+
+    config, _missing = _resolve_reward_config()
+    ceiling = float(config.max_reward)
+    return ceiling if ceiling > 0.0 else float(DEFAULT_CONFIG.max_reward)
+
+
 def to_eval_result(grade_dict: dict[str, Any]) -> Any:
     raw_reward = float(grade_dict["reward"])
-    hud_reward = max(0.0, min(raw_reward / 2.0, 1.0))
-    correct = bool(grade_dict.get("correct", False)) and not grade_dict.get("caps")
+    ceiling = _reward_ceiling()
+    hud_reward = max(0.0, min(raw_reward / ceiling, 1.0))
+    caps = grade_dict.get("caps") or []
+    correct = bool(grade_dict.get("correct", False)) and not caps
+    speedup = grade_dict.get("speedup")
     speedup_score = max(0.0, min(float(grade_dict.get("speedup_score", 0.0)), 1.0))
-    held_out = 1.0 if grade_dict.get("split") == "held_out" and correct else 0.0
-    anti_hack = 1.0 if not grade_dict.get("caps") else 0.0
-    compile_success = 1.0 if "cuda_unavailable" not in grade_dict.get("caps", []) else 0.0
+    split = grade_dict.get("split")
+    held_out = 1.0 if split == "held_out" and correct else 0.0
+    anti_hack = 1.0 if not caps else 0.0
+    compile_success = 1.0 if "cuda_unavailable" not in caps else 0.0
+    op = grade_dict.get("op")
     info = {
         **grade_dict,
         "protean_reward_raw": raw_reward,
+        "protean_reward_max": ceiling,
         "hud_reward_normalized": hud_reward,
     }
+
+    # Human-readable one-line summary for the HUD dashboard (content renders in
+    # the run view). Mirrors the verilog-template's "<task> graded" pattern but
+    # surfaces the substrate that actually drove the reward.
+    cap_str = ",".join(caps) if caps else "none"
+    speedup_str = f"{float(speedup):.2f}x" if isinstance(speedup, (int, float)) else "n/a"
+    content = (
+        f"{op or 'kernel'}/{split or '?'}: reward={hud_reward:.3f} "
+        f"(raw={raw_reward:.3f}/{ceiling:g}) correct={correct} "
+        f"speedup={speedup_str} caps={cap_str}"
+    )
+
+    # Per-subscore metadata exposes the raw timing/profiling substrate in the
+    # dashboard's subscore drill-down. ``SubScore.metadata`` is excluded from the
+    # scored wire payload (Field(exclude=True)) so it is diagnostic-only and does
+    # not affect reward math.
     EvaluationResult, SubScore = _eval_result_classes()
 
     return EvaluationResult(
         reward=hud_reward,
+        done=True,
+        content=content,
         subscores=[
-            SubScore(name="hud_reward", value=hud_reward, weight=1.0),
+            SubScore(
+                name="hud_reward",
+                value=hud_reward,
+                weight=1.0,
+                metadata={
+                    "raw_reward": raw_reward,
+                    "max_reward": ceiling,
+                    "correctness_reward": grade_dict.get("correctness_reward"),
+                    "speedup_reward": grade_dict.get("speedup_reward"),
+                    "pr_reward": grade_dict.get("pr_reward"),
+                    "pr_mode": grade_dict.get("pr_mode"),
+                },
+            ),
             SubScore(name="correctness", value=1.0 if correct else 0.0, weight=0.0),
-            SubScore(name="speedup", value=speedup_score, weight=0.0),
-            SubScore(name="held_out", value=held_out, weight=0.0),
-            SubScore(name="anti_hack", value=anti_hack, weight=0.0),
-            SubScore(name="compile_success", value=compile_success, weight=0.0),
+            SubScore(
+                name="speedup",
+                value=speedup_score,
+                weight=0.0,
+                metadata={
+                    "speedup": speedup,
+                    "t_eager_ms": grade_dict.get("t_eager_ms"),
+                    "t_kernel_ms": grade_dict.get("t_kernel_ms"),
+                    "pr_frac": grade_dict.get("pr_frac"),
+                },
+            ),
+            SubScore(
+                name="held_out",
+                value=held_out,
+                weight=0.0,
+                metadata={"split": split},
+            ),
+            SubScore(
+                name="anti_hack",
+                value=anti_hack,
+                weight=0.0,
+                metadata={"caps": caps, "caps_advisory": grade_dict.get("caps_advisory")},
+            ),
+            SubScore(
+                name="compile_success",
+                value=compile_success,
+                weight=0.0,
+                metadata={"launches_timed": grade_dict.get("launches_timed")},
+            ),
         ],
         info=info,
     )

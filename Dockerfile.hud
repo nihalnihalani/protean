@@ -1,4 +1,8 @@
-FROM nvidia/cuda:12.4.1-devel-ubuntu22.04
+# Ubuntu 24.04 ships Python 3.12 as the system interpreter, matching the project's
+# stated runtime (and the 3.12 dev venv). Pinning the deploy image to 3.12 avoids a
+# silent runtime/version drift vs. local development (Bomb-2's safety rationale and
+# any 3.12-only behavior in grading/benchmarks rely on 3.12).
+FROM nvidia/cuda:12.4.1-devel-ubuntu24.04
 
 ENV DEBIAN_FRONTEND=noninteractive
 ENV TRITON_CACHE_DIR=/triton-cache
@@ -7,7 +11,7 @@ ENV PATH="/opt/venv/bin:${PATH}"
 ENV TORCH_CUDA_ARCH_LIST="8.0;8.6;8.9;9.0"
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-        python3.11 python3.11-venv python3-pip git util-linux && \
+        python3.12 python3.12-venv python3-pip git util-linux && \
     rm -rf /var/lib/apt/lists/*
 
 RUN mkdir -p /triton-cache && chmod 777 /triton-cache
@@ -15,7 +19,7 @@ RUN mkdir -p /triton-cache && chmod 777 /triton-cache
 WORKDIR /app
 
 # Initialize virtualenv and upgrade pip
-RUN python3.11 -m venv /opt/venv && \
+RUN python3.12 -m venv /opt/venv && \
     python -m pip install --no-cache-dir --upgrade pip
 
 # Cache layer: Install vllm first (since it's heavy and drags torch with it)
@@ -76,4 +80,12 @@ RUN find /app/src/protean/tasks -path '*/donotaccess' -type d -exec chmod 700 {}
     chown -R root:root /app/src/protean/tasks
 
 ENV AGENT_UID=1000 AGENT_GID=1000 HOME=/home/agent USER=agent
-CMD ["python", "-c", "from protean.env import env; env.run(host='0.0.0.0', port=8765)"]
+EXPOSE 8765
+# v6 serve entrypoint (matches verilog/coding starter templates). env.run() was a
+# deprecated v5 LegacyEnvMixin shim and is invisible to `hud deploy`'s static CMD
+# parser. The module spec is the PATH form `src/protean/env:env` because hud's
+# serve loader (`_load_environment`) treats the pre-`:` token as a filesystem
+# path (Path("src/protean/env.py")), not a dotted module — `protean.env` would
+# resolve to the nonexistent Path("protean.env.py"). WORKDIR is /app and the
+# source is copied there, so /app/src/protean/env.py exists at serve time.
+CMD ["python3", "-m", "hud", "serve", "protean.env:env", "--host", "0.0.0.0", "--port", "8765"]

@@ -1,4 +1,14 @@
-from protean.env import HUD_TASKS, grade_hud_source, hud_prompt, task_metadata
+import pytest
+
+from protean.env import (
+    EXPECTED_TEMPLATE_IDS,
+    HUD_TASKS,
+    assert_templates_registered,
+    grade_hud_source,
+    hud_prompt,
+    registered_template_ids,
+    task_metadata,
+)
 from protean.grader import to_eval_result
 from protean.kernels import PYTORCH_PASSTHROUGH
 
@@ -98,3 +108,89 @@ def test_hud_registration_uses_name_api():
 
     assert calls["env_names"] == ["protean"]
     assert calls["template_ids"] == ["elementwise_add_relu", "rmsnorm", "softmax_rows"]
+
+
+def test_expected_template_ids_match_three_ops():
+    assert EXPECTED_TEMPLATE_IDS == ("elementwise_add_relu", "rmsnorm", "softmax_rows")
+
+
+def test_registered_template_ids_when_hud_present():
+    import protean.env as env_mod
+
+    if env_mod.env is None:
+        pytest.skip("hud not installed; registration is a no-op without the hud extra")
+
+    registered = set(registered_template_ids())
+    assert set(EXPECTED_TEMPLATE_IDS) <= registered
+    # All three expected templates registered, none dropped.
+    assert len(set(EXPECTED_TEMPLATE_IDS) & registered) == 3
+
+
+def test_assert_templates_registered_passes_when_hud_present():
+    import protean.env as env_mod
+
+    if env_mod.env is None:
+        pytest.skip("hud not installed; serve-time guard is exercised separately")
+
+    # Should not raise: the live env registered all expected templates at import.
+    assert_templates_registered()
+
+
+def test_templates_registered_immediately_after_import():
+    """Pin the eager-registration timing the import-time serve guard relies on.
+
+    The @_template decorators run at module import, so registered_template_ids()
+    must return all three expected ids immediately after import -- before any serve
+    hook runs. If a future HUD SDK switches to lazy registration, this test fails,
+    flagging that the import-time assert_templates_registered() guard must move into
+    @env.initialize only.
+    """
+
+    import protean.env as env_mod
+
+    if env_mod.env is None:
+        pytest.skip("hud not installed; eager registration is a no-op without the hud extra")
+
+    assert set(registered_template_ids()) == set(EXPECTED_TEMPLATE_IDS)
+
+
+def test_registered_templates_are_not_dict_stubs():
+    """When hud is present, the registered templates must be real HUD objects.
+
+    Guards against vacuously-passing registration where the hud-absent dict stubs
+    (env.py's else-branch) leak into the registered set: a dict-keyed registry of
+    the right ids would still satisfy the id check, so assert the env itself is a
+    real Environment (not None) and that the live registry is non-empty.
+    """
+
+    import protean.env as env_mod
+
+    if env_mod.env is None:
+        pytest.skip("hud not installed; registration is a no-op without the hud extra")
+
+    assert not isinstance(env_mod.env, dict)
+    assert len(registered_template_ids()) >= len(EXPECTED_TEMPLATE_IDS)
+
+
+def test_assert_templates_registered_fails_loud_when_env_missing(monkeypatch):
+    import protean.env as env_mod
+
+    # Simulate a deploy image where the hud import failed: env is None. The guard
+    # must raise rather than let a zero-template env be served silently.
+    monkeypatch.setattr(env_mod, "env", None)
+    assert registered_template_ids() == ()
+    with pytest.raises(RuntimeError, match="not importable"):
+        env_mod.assert_templates_registered()
+
+
+def test_assert_templates_registered_fails_loud_when_templates_missing(monkeypatch):
+    import protean.env as env_mod
+
+    class _EmptyEnv:
+        tasks: dict[str, object] = {}
+        templates: dict[str, object] = {}
+
+    monkeypatch.setattr(env_mod, "env", _EmptyEnv())
+    assert env_mod.registered_template_ids() == ()
+    with pytest.raises(RuntimeError, match="registration"):
+        env_mod.assert_templates_registered()

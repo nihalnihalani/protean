@@ -1,6 +1,8 @@
 from dataclasses import replace
 
-from protean.rewards import DEFAULT_CONFIG, compute_reward
+import protean.grader as grader_mod
+from protean.grader import to_eval_result
+from protean.rewards import DEFAULT_CONFIG, RewardConfig, compute_reward
 
 
 def test_incorrect_gets_zero_reward():
@@ -248,3 +250,97 @@ def test_pr_modes_do_not_leak_reward_on_hard_failure():
         assert grade["pr_reward"] == 0.0
         assert grade["correctness_reward"] == 0.0
         assert grade["speedup_reward"] == 0.0
+
+
+# --- to_eval_result: HUD EvaluationResult contract --------------------------
+
+
+def _full_grade(**overrides):
+    """A representative grade_source-shaped dict for to_eval_result tests."""
+
+    grade = {
+        "reward": 1.0,
+        "correct": True,
+        "speedup": 4.0,
+        "speedup_score": 0.5,
+        "split": "held_out",
+        "caps": [],
+        "t_eager_ms": 2.0,
+        "t_kernel_ms": 0.5,
+        "pr_frac": 0.7,
+        "pr_mode": "bonus",
+        "correctness_reward": 0.3,
+        "speedup_reward": 0.75,
+        "pr_reward": 0.14,
+        "launches_timed": 1,
+        "op": "rmsnorm",
+    }
+    grade.update(overrides)
+    return grade
+
+
+def test_to_eval_result_normalizes_by_config_max_reward():
+    # max_reward defaults to 2.0, so a raw reward of 1.0 -> 0.5.
+    result = to_eval_result(_full_grade(reward=1.0))
+    assert result.reward == 0.5
+    assert result.info["protean_reward_raw"] == 1.0
+    assert result.info["protean_reward_max"] == DEFAULT_CONFIG.max_reward
+
+
+def test_to_eval_result_normalization_tracks_config_max_reward(monkeypatch):
+    # A production config that changes max_reward must change the normaliser, not
+    # leave a hardcoded /2.0 that pushes rewards above 1.0 or compresses them.
+    monkeypatch.setattr(grader_mod, "_resolve_reward_config", lambda: (RewardConfig(max_reward=4.0), False))
+    result = to_eval_result(_full_grade(reward=2.0))
+    # 2.0 / 4.0 == 0.5, not 2.0 / 2.0 == 1.0.
+    assert result.reward == 0.5
+    assert result.info["protean_reward_max"] == 4.0
+
+
+def test_to_eval_result_clamps_into_unit_range():
+    # Even a raw reward above the ceiling stays within [0, 1].
+    result = to_eval_result(_full_grade(reward=10.0))
+    assert result.reward == 1.0
+    assert all(0.0 <= s.value <= 1.0 for s in result.subscores)
+
+
+def test_to_eval_result_sets_done_and_content():
+    result = to_eval_result(_full_grade())
+    assert result.done is True
+    assert isinstance(result.content, str)
+    # content surfaces the substrate that drove the reward.
+    assert "rmsnorm/held_out" in result.content
+    assert "reward=" in result.content
+    assert "speedup=4.00x" in result.content
+    assert "caps=none" in result.content
+
+
+def test_to_eval_result_content_lists_caps_on_failure():
+    result = to_eval_result(_full_grade(reward=0.0, correct=False, caps=["incorrect"]))
+    assert "caps=incorrect" in result.content
+    assert "correct=False" in result.content
+
+
+def test_to_eval_result_attaches_subscore_metadata():
+    result = to_eval_result(_full_grade())
+    by_name = {s.name: s for s in result.subscores}
+    # Speedup subscore carries the raw timing/profiling substrate.
+    assert by_name["speedup"].metadata["speedup"] == 4.0
+    assert by_name["speedup"].metadata["t_kernel_ms"] == 0.5
+    assert by_name["speedup"].metadata["pr_frac"] == 0.7
+    # hud_reward subscore carries the reward decomposition.
+    assert by_name["hud_reward"].metadata["raw_reward"] == 1.0
+    assert by_name["hud_reward"].metadata["max_reward"] == DEFAULT_CONFIG.max_reward
+    assert by_name["hud_reward"].metadata["speedup_reward"] == 0.75
+    # anti_hack subscore carries the caps for audit.
+    assert by_name["anti_hack"].metadata["caps"] == []
+
+
+def test_to_eval_result_weighted_subscores_match_reward():
+    # The only positively-weighted subscore (hud_reward, weight=1.0) must equal
+    # the reward, so HUD's model_validator does not warn about a mismatch.
+    result = to_eval_result(_full_grade(reward=1.0))
+    weighted = sum(s.value * s.weight for s in result.subscores)
+    assert abs(weighted - result.reward) < 1e-9
+    pos_weight = sum(s.weight for s in result.subscores if s.weight > 0)
+    assert abs(pos_weight - 1.0) < 1e-9
