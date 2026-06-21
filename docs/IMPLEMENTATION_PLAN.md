@@ -113,6 +113,16 @@ Status: wired, requires `FIREWORKS_API_KEY` for new runs.
 Fireworks path:
 
 - Uses OpenAI-compatible chat completions.
+
+## Layer 5: GRPO Stretch Controls
+
+Status: scaffolded and test-covered; not required for the guaranteed demo.
+
+- Frozen manifest: `manifest_v1.jsonl` is committed and SHA256-pinned.
+- Curriculum: early GRPO steps sample a prefix of train shapes only; held-out shapes are never mixed into training.
+- Calibration: optional real rollout calibration checks compile rate, allclose rate, reward spread, and speedup before training.
+- Safeguards: step-75 warning, step-150 hard abort, cost/time limits, and 30-step flatline detection.
+- Curve logging: `RewardCurveLogger` writes `outputs/train_history.json`; `scripts/plot_curve.py` plots that real file.
 - Requests strict JSON with `response_format={"type": "json_object"}`.
 - Uses `reasoning_effort="low"`.
 - Falls back from `content` to `reasoning_content` for `gpt-oss`.

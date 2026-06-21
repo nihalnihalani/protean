@@ -141,3 +141,15 @@ taskset:     https://hud.ai/tasksets/6d2feb10-b23c-4928-a1f9-e8b53db364d7
 deploy:      image version 5, v6 control channel introspection OK
 sync:        4 created, 0 updated
 ```
+
+## GRPO Stretch Controls
+
+Imported from `feature/step-5-6-7-grpo-vllm-pr`, adapted to current Protean `shape` tasks:
+
+- [x] `RewardCurveLogger` writes `outputs/train_history.json` with train and held-out reward curves.
+- [x] `scripts/plot_curve.py` consumes real history data and refuses missing history instead of inventing mock curves.
+- [x] Calibration supports real base-model rollout checks and `PROTEAN_SKIP_CALIBRATION=1` is the dev escape hatch.
+- [x] L1 curriculum restricts early train shapes while held-out shapes always use the full moat split.
+- [x] Cost abort callback includes step-75 warning, step-150 hard review, and 30-step flatline detection.
+- [x] `manifest_v1.jsonl` is frozen, committed, and pinned by SHA256 in `src/protean/tasks.py`.
+- [x] Dynamic manifest generation requires `PROTEAN_ALLOW_DYNAMIC_MANIFEST=1`.

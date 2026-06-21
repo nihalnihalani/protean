@@ -12,4 +12,5 @@ runs/
 wandb/
 triton-cache/
 manifest_*.jsonl
+!manifest_v1.jsonl
 demo/protean-demo-results.*

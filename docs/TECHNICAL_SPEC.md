@@ -213,3 +213,13 @@ The v1 learned layer is a 1,000,005-parameter policy head:
 - training signal: `delta_vs_best` from `trials.jsonl`
 
 This is a controller over edit ordering, not a replacement for the coding model. A later 7B LoRA/GRPO run should be compared against this small controller and the deterministic baseline.
+
+## 12. GRPO Stretch Controls
+
+The optional GRPO path now has production guardrails without becoming the core demo:
+
+- `manifest_v1.jsonl` freezes the task rows and `src/protean/tasks.py` pins its SHA256.
+- `PROTEAN_ALLOW_DYNAMIC_MANIFEST=1` is required for local dynamic generation.
+- `train/calibrate.py` can run real base-model rollouts, supports `PROTEAN_SKIP_CALIBRATION=1`, and escalates reward config only through the canonical hidden config.
+- `train/callbacks.py` writes `outputs/train_history.json`, runs held-out eval every 25 steps, warns at step 75, and hard-aborts weak or flat training at step 150.
+- `scripts/plot_curve.py` plots the real history file for train-vs-held-out reward figures.

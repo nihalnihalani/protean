@@ -231,6 +231,9 @@ Hard failures get reward `0.0`. Correct kernels get a small correctness floor pl
 | `src/protean/kernels.py` | Known-good kernels and red-team examples |
 | `src/protean/model/` | Policy, RL layer, Fireworks backend, 1M learned head |
 | `scripts/run_hud_demo_agent.py` | Deterministic HUD demo agent for non-zero dashboard proof |
+| `manifest_v1.jsonl` | Pinned training task manifest for reproducible GRPO rollouts |
+| `train/callbacks.py` | Cost/time/reward safeguards plus live reward curve serialization |
+| `scripts/plot_curve.py` | Plots real `outputs/train_history.json` data, no mock curve |
 | `docs/FIGURES.md` | Reusable Mermaid diagrams and result tables for the demo |
 | `docs/` | Architecture, technical spec, build checklist, open issues |
 
@@ -243,4 +246,5 @@ Protean does not yet claim that a trained model beats every hand-optimized kerne
 1. Run Fireworks overnight with `FIREWORKS_API_KEY` and `HUD_API_KEY` on Spark.
 2. Stream every candidate to one HUD job with `--stream-hud --hud-job-name protean-overnight`.
 3. Train the 1M policy head from those traces.
-4. Compare deterministic, Fireworks, and learned-policy edit ordering on held-out shapes.
+4. Optional stretch: run GRPO with the pinned manifest, curriculum, calibration, and reward-curve logger.
+5. Compare deterministic, Fireworks, learned-policy, and GRPO edit ordering on held-out shapes.
