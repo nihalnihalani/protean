@@ -12,6 +12,7 @@ from dataclasses import dataclass
 from typing import Iterable
 
 from protean.model.harness import harness_for_kernel_edit
+from protean.model.tiny_policy import ACTION_BLOCK_SIZES, TinyPolicyHead, action_index, state_features
 
 
 @dataclass(frozen=True)
@@ -41,3 +42,24 @@ def local_kernel_edits(current_best: str) -> Iterable[CandidateEdit]:
             source=_replace_block_size(current_best, block_size),
             harness=harness_for_kernel_edit(),
         )
+
+
+def learned_kernel_edits(current_best: str, best_score: tuple[float, float, int], policy_path: str) -> Iterable[CandidateEdit]:
+    """Order deterministic edits with a trained tiny policy head."""
+
+    policy = TinyPolicyHead.load(policy_path)
+    edits = list(local_kernel_edits(current_best))
+    by_action = {action_index(edit.name): edit for edit in edits}
+    for action in policy.ranked_actions(state_features(best_score)):
+        edit = by_action.get(action)
+        if edit is not None:
+            block_size = ACTION_BLOCK_SIZES[action]
+            yield CandidateEdit(
+                name=edit.name,
+                reason=f"Tiny policy head selected block size {block_size}.",
+                source=edit.source,
+                harness=edit.harness,
+                policy="tiny_policy_head",
+                model_cost_usd=0.0,
+                tokens=0,
+            )

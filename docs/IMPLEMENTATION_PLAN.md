@@ -29,6 +29,8 @@ Keep the repo small. The goal is an overnight optimizer, but each layer must wor
 ## Layer 4: Model-Agent Self-Improvement
 
 - Keep all model-related files in `src/protean/model/`.
+- Train the v1 tiny policy head from `runs/protean-overnight/trials.jsonl`.
+- Use the learned policy to reorder future kernel edits.
 - Let the model propose changes to the edit policy, RL scoring rule, and harness settings.
 - Run the same verifier after every policy change.
 - Keep policy changes only when they improve held-out speed or reduce wasted trials.

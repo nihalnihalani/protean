@@ -58,6 +58,7 @@ candidate source
   - `policy.py` proposes kernel edits.
   - `rl_layer.py` scores and accepts candidates.
   - `harness.py` owns benchmark knobs the agent can tune.
+  - `tiny_policy.py` trains the v1 learned policy head from verifier traces.
   - `prompts/` and `configs/` hold the model prompt contract and active policy config.
   - The current edit policy is deterministic; a model-backed policy should replace it next.
 
@@ -77,6 +78,10 @@ candidate source
   - Runs the iterative optimizer.
   - Writes `runs/protean-overnight/best_kernel.py`, `trials.jsonl`, and `summary.json`.
 
+- `scripts/train_tiny_policy.py`
+  - Trains the v1 tiny policy head from `trials.jsonl`.
+  - Writes `runs/protean-overnight/tiny_policy.json`.
+
 ## Spark Runtime
 
 The verified GPU target is `ssh spark`.
@@ -89,6 +94,8 @@ python scripts/check_redteam.py
 python scripts/smoke_verifier.py
 python scripts/run_demo_benchmark.py
 python scripts/run_optimizer.py --max-rounds 1
+python scripts/train_tiny_policy.py --trace runs/protean-overnight/trials.jsonl
+python scripts/run_optimizer.py --max-rounds 1 --policy-path runs/protean-overnight/tiny_policy.json
 ```
 
 Spark has already produced a real held-out delta for `elementwise_add_relu`.
@@ -97,11 +104,12 @@ Spark has already produced a real held-out delta for `elementwise_add_relu`.
 
 Add features in this order only:
 
-1. Model-backed kernel edit policy in `src/protean/model/policy.py`.
-2. Self-improvement policy for `src/protean/model/rl_layer.py` and `src/protean/model/harness.py`.
-3. `rmsnorm` as the second op.
-4. Profiler-based runtime attribution if needed.
-5. HUD remote packaging.
-6. GRPO training.
+1. Use the tiny policy head as the default learned edit policy after enough traces exist.
+2. Model-backed kernel edit policy in `src/protean/model/policy.py`.
+3. Self-improvement policy for `src/protean/model/rl_layer.py` and `src/protean/model/harness.py`.
+4. `rmsnorm` as the second op.
+5. Profiler-based runtime attribution if needed.
+6. HUD remote packaging.
+7. GRPO training.
 
 Do not add training code before the optimizer loop is stable on at least two ops.

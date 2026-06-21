@@ -9,8 +9,22 @@ The hackathon goal is not just "benchmark one kernel." The goal is to show a cod
 - `policy.py`: proposes kernel edits. Today it is deterministic; next it becomes model-backed.
 - `rl_layer.py`: scores candidates and decides whether an edit becomes the new best.
 - `harness.py`: owns benchmark knobs the agent can tune later.
+- `tiny_policy.py`: v1 learned policy head trained from verifier traces.
 - `prompts/kernel_optimizer.md`: prompt contract for the future model-backed coding agent.
 - `configs/local_deterministic.json`: current no-model policy config.
+- `configs/tiny_policy_head.json`: config/spec for the live-demo learned layer.
+
+## V1 Learned Layer
+
+Run an optimizer trace, train the tiny policy head, then run the optimizer with the learned policy:
+
+```bash
+python scripts/run_optimizer.py --max-rounds 1
+python scripts/train_tiny_policy.py --trace runs/protean-overnight/trials.jsonl
+python scripts/run_optimizer.py --max-rounds 1 --policy-path runs/protean-overnight/tiny_policy.json
+```
+
+The default tiny head has 645 trainable parameters. It is intentionally much smaller than the later 100M controller; the point is to prove that verifier traces can train a policy that changes the coding agent's edit behavior.
 
 ## Boundary
 

@@ -1,0 +1,20 @@
+{
+  "policy": "tiny_policy_head",
+  "goal": "learn which kernel edit to try next from verifier traces",
+  "parameter_count_default": 645,
+  "inputs": [
+    "current_best_held_out_speedup",
+    "current_best_reward",
+    "current_best_correct_held_out_count",
+    "bias"
+  ],
+  "actions": [
+    "block_size_128",
+    "block_size_256",
+    "block_size_512",
+    "block_size_1024",
+    "block_size_2048"
+  ],
+  "training_signal": "delta_vs_best from trials.jsonl",
+  "runtime_target": "5-20 minutes for live hackathon traces"
+}

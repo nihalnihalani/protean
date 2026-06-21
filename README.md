@@ -2,7 +2,22 @@
 
 Small overnight GPU-kernel optimizer.
 
-Protean starts with one promise:
+## Goal
+
+Protean's goal is to build a coding agent that gets better at optimizing GPU kernels by trying edits, benchmarking them, learning from the results, and improving its next attempts.
+
+You give Protean a GPU kernel. Protean keeps modifying it, tests every version for correctness and speed, rejects bad versions, keeps better versions, and logs every trial, speedup, failure, cost, and decision.
+
+For the hackathon, the goal is deliberately lean:
+
+1. A coding agent proposes kernel edits.
+2. A verifier grades correctness, speed, held-out shape behavior, and anti-hack checks.
+3. A tiny learned policy head trains from those verifier traces.
+4. The learned policy changes which edits the agent tries next.
+
+Long term, Protean should run overnight and wake you up with a faster, correct, well-tested kernel plus a full audit trail.
+
+## Promise
 
 > Start from a working GPU kernel, keep editing the current best version overnight, and wake up with the fastest correct kernel plus a full optimization trace.
 
@@ -66,6 +81,13 @@ Run the optimizer loop:
 python scripts/run_optimizer.py --max-rounds 1
 ```
 
+Train the v1 learned layer from the optimizer trace:
+
+```bash
+python scripts/train_tiny_policy.py --trace runs/protean-overnight/trials.jsonl
+python scripts/run_optimizer.py --max-rounds 1 --policy-path runs/protean-overnight/tiny_policy.json
+```
+
 Outputs:
 
 - `demo/protean-demo-results.md`
@@ -73,6 +95,7 @@ Outputs:
 - `runs/protean-overnight/best_kernel.py`
 - `runs/protean-overnight/trials.jsonl`
 - `runs/protean-overnight/summary.json`
+- `runs/protean-overnight/tiny_policy.json`
 
 Each optimizer trial logs the implementation path, edit reason, harness settings, score before/after, delta versus the current best, acceptance decision, elapsed time, and model cost. The current deterministic policy has `model_cost_usd: 0.0`; model-backed edits should fill that field later.
 
@@ -98,7 +121,7 @@ Hard failures get zero reward. Slow-but-correct kernels can report correctness, 
 
 ## Add Next
 
-1. Replace the deterministic edit policy with a model-backed edit policy.
+1. Use the tiny policy head as the default learned edit-ordering policy after enough traces exist.
 2. Let the model improve `src/protean/model/rl_layer.py` and `src/protean/model/harness.py`, with every change logged.
 3. Add `rmsnorm` as the second optimization target.
 4. Add training/RL only after the optimizer loop is stable on two ops.

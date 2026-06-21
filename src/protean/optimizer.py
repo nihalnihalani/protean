@@ -12,7 +12,7 @@ from pathlib import Path
 
 from protean.grader import grade_source
 from protean.kernels import HAND_OPTIMIZED_ELEMENTWISE_ADD_RELU
-from protean.model.policy import local_kernel_edits
+from protean.model.policy import learned_kernel_edits, local_kernel_edits
 from protean.model.rl_layer import accept_candidate, score, score_delta
 from protean.splits import HELD_OUT_SHAPES, TRAIN_SHAPES
 
@@ -42,6 +42,7 @@ def run_optimization(
     out_dir: str | Path = "runs/protean-overnight",
     max_rounds: int = 1,
     seed_source: str = HAND_OPTIMIZED_ELEMENTWISE_ADD_RELU,
+    policy_path: str | Path | None = None,
 ) -> dict:
     out = Path(out_dir)
     out.mkdir(parents=True, exist_ok=True)
@@ -81,7 +82,12 @@ def run_optimization(
         )
 
         for round_idx in range(max_rounds):
-            for edit in local_kernel_edits(best_source):
+            edits = (
+                learned_kernel_edits(best_source, best_score, str(policy_path))
+                if policy_path is not None
+                else local_kernel_edits(best_source)
+            )
+            for edit in edits:
                 trial_count += 1
                 candidate_path = candidate_dir / f"{trial_count:04d}_{edit.name}.py"
                 candidate_path.write_text(edit.source)
@@ -133,6 +139,7 @@ def run_optimization(
         "trials": trial_count,
         "accepted": accepted_count,
         "elapsed_sec": round(time.time() - started, 6),
+        "policy_path": str(policy_path) if policy_path is not None else None,
     }
     summary_path.write_text(json.dumps(final, indent=2, sort_keys=True) + "\n")
     return final
