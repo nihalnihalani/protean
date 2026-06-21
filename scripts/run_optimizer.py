@@ -12,6 +12,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
 from protean.optimizer import run_optimization
+from protean.task_catalog import OPS
 
 
 def main() -> int:
@@ -19,20 +20,36 @@ def main() -> int:
     parser.add_argument("--out-dir", default="runs/protean-overnight")
     parser.add_argument("--max-rounds", type=int, default=1)
     parser.add_argument("--op", default="elementwise_add_relu")
+    parser.add_argument("--all-ops", action="store_true",
+                        help="Run the optimizer on every registered op.")
     parser.add_argument("--edit-policy", choices=["local", "learned", "fireworks"], default="local")
     parser.add_argument("--policy-path", help="Optional tiny policy JSON used to order kernel edits.")
     parser.add_argument("--fireworks-model", default=None)
     args = parser.parse_args()
 
-    result = run_optimization(
-        out_dir=ROOT / args.out_dir,
-        max_rounds=args.max_rounds,
-        op=args.op,
-        edit_policy=args.edit_policy,
-        policy_path=args.policy_path,
-        fireworks_model=args.fireworks_model,
-    )
-    print(json.dumps(result, indent=2, sort_keys=True))
+    ops_to_run = [op.name for op in OPS] if args.all_ops else [args.op]
+    results = {}
+
+    for op in ops_to_run:
+        result = run_optimization(
+            out_dir=ROOT / args.out_dir,
+            max_rounds=args.max_rounds,
+            op=op,
+            edit_policy=args.edit_policy,
+            policy_path=args.policy_path,
+            fireworks_model=args.fireworks_model,
+        )
+        results[op] = result
+
+    if len(results) == 1:
+        op = list(results.keys())[0]
+        print(json.dumps(results[op], indent=2, sort_keys=True))
+    else:
+        print("=== All Ops Summary ===")
+        for op, result in results.items():
+            best = result.get("best_score", [0, 0, 0])
+            print(f"  {op:30s}  score={best}  accepted={result.get('accepted',0)}/{result.get('trials',0)}")
+
     return 0
 
 

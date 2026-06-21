@@ -102,3 +102,14 @@ def solution(x, y):
     _noop_kernel[(1,)](x, out)
     return out
 '''
+
+# Op-specific seed kernels for multi-op optimization
+SEED_KERNELS = {
+    "elementwise_add_relu": HAND_OPTIMIZED_ELEMENTWISE_ADD_RELU,
+    "rmsnorm": HAND_OPTIMIZED_RMSNORM,
+}
+
+
+def seed_kernel_for(op: str) -> str:
+    """Return the best-known hand-optimized kernel for the given op."""
+    return SEED_KERNELS.get(op, HAND_OPTIMIZED_ELEMENTWISE_ADD_RELU)

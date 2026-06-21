@@ -11,7 +11,7 @@ import time
 from pathlib import Path
 
 from protean.grader import grade_source
-from protean.kernels import HAND_OPTIMIZED_ELEMENTWISE_ADD_RELU
+from protean.kernels import HAND_OPTIMIZED_ELEMENTWISE_ADD_RELU, seed_kernel_for
 from protean.model.policy import learned_kernel_edits, local_kernel_edits
 from protean.model.rl_layer import accept_candidate, score, score_delta
 from protean.splits import HELD_OUT_SHAPES, TRAIN_SHAPES
@@ -41,7 +41,7 @@ def run_optimization(
     *,
     out_dir: str | Path = "runs/protean-overnight",
     max_rounds: int = 1,
-    seed_source: str = HAND_OPTIMIZED_ELEMENTWISE_ADD_RELU,
+    seed_source: str | None = None,
     policy_path: str | Path | None = None,
     edit_policy: str = "local",
     op: str = "elementwise_add_relu",
@@ -52,8 +52,11 @@ def run_optimization(
     candidate_dir = out / "candidates"
     candidate_dir.mkdir(exist_ok=True)
     log_path = out / "trials.jsonl"
-    best_path = out / "best_kernel.py"
-    summary_path = out / "summary.json"
+    best_path = out / f"best_kernel_{op}.py"
+    summary_path = out / f"summary_{op}.json"
+
+    if seed_source is None:
+        seed_source = seed_kernel_for(op)
 
     best_source = seed_source
     started = time.time()

@@ -95,6 +95,7 @@ def call_fireworks_chat(
         headers={
             "Authorization": f"Bearer {key}",
             "Content-Type": "application/json",
+            "User-Agent": "protean/0.1 (+https://github.com/nihalnihalani/protean)",
         },
         method="POST",
     )
@@ -105,7 +106,12 @@ def call_fireworks_chat(
         body = exc.read().decode("utf-8", errors="replace")
         raise RuntimeError(f"Fireworks request failed: HTTP {exc.code}: {body}") from exc
 
-    content = data["choices"][0]["message"]["content"]
+    # gpt-oss and similar reasoning models may emit text in reasoning_content
+    # instead of content. Fall back so the parser always has something to work on.
+    msg = data["choices"][0]["message"]
+    content = msg.get("content") or msg.get("reasoning_content") or ""
+    if not content:
+        raise RuntimeError("Fireworks response had empty content and reasoning_content")
     usage = data.get("usage", {})
     return content, {
         "prompt_tokens": int(usage.get("prompt_tokens", 0) or 0),
