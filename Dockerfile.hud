@@ -25,24 +25,14 @@ RUN python -m pip install --no-cache-dir vllm==0.6.3
 COPY requirements-train.txt /app/requirements-train.txt
 RUN python -m pip install --no-cache-dir -r /app/requirements-train.txt
 
-# trl 0.15.2 hard-imports mergekit in callbacks.py unconditionally (despite having
-# an is_mergekit_available() guard — it's a bug). We never use ModelMergeCallback,
-# so install a minimal stub package that satisfies the one import trl needs:
-#   mergekit.config.MergeConfiguration
-# Stub approach is safe from stale .pyc issues that affect sed-based patching.
-RUN python3 -c "
-import os, sys
-base = '/opt/venv/lib/python3.11/site-packages/mergekit'
-os.makedirs(base, exist_ok=True)
-# __init__.py
-open(os.path.join(base, '__init__.py'), 'w').close()
-# config.py — only symbol trl/mergekit_utils.py imports at module level
-with open(os.path.join(base, 'config.py'), 'w') as f:
-    f.write('class MergeConfiguration:\n    pass\n')
-print('mergekit stub installed at', base)
-sys.stdout.flush()
-" && \
-    python3 -c "from mergekit.config import MergeConfiguration; print('mergekit stub import OK')"
+# trl 0.15.2 hard-imports mergekit in callbacks.py unconditionally (upstream bug).
+# We never use ModelMergeCallback, so install a minimal stub that provides the one
+# symbol trl needs: mergekit.config.MergeConfiguration
+RUN mkdir -p /opt/venv/lib/python3.11/site-packages/mergekit && \
+    touch /opt/venv/lib/python3.11/site-packages/mergekit/__init__.py && \
+    printf 'class MergeConfiguration:\n    pass\n' \
+        > /opt/venv/lib/python3.11/site-packages/mergekit/config.py && \
+    python3 -c "from mergekit.config import MergeConfiguration; print('mergekit stub OK')"
 
 # Cache layer: Install HUD SDK
 RUN python -m pip install --no-cache-dir "hud-python[agents]==0.6.6"
