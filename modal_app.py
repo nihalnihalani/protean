@@ -70,6 +70,7 @@ def train():
     """Launch the overnight GRPO training loop on H100."""
     os.environ["SFT_CKPT_PATH"] = "/models/sft_warmup"
     os.environ["WORKSPACE_ROOT"] = "/workdir"
+    os.environ["PROTEAN_OUTPUT_DIR"] = "/models"
     
     for p in ["/app", "/mcp_server", "/app/train", "/mcp_server/train"]:
         if p not in sys.path:
