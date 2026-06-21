@@ -37,6 +37,21 @@ def evaluate_kernel(source: str, *, op: str = "elementwise_add_relu", reps: int,
     }
 
 
+def failed_evaluation_summary(exc: Exception) -> dict:
+    """Represent verifier/runtime failures as rejected trace rows."""
+
+    return {
+        "rows": [],
+        "correct_held_out": 0,
+        "mean_held_out_speedup": 0.0,
+        "mean_reward": 0.0,
+        "eval_error": {
+            "type": type(exc).__name__,
+            "message": str(exc),
+        },
+    }
+
+
 def run_optimization(
     *,
     out_dir: str | Path = "runs/protean-overnight",
@@ -111,14 +126,22 @@ def run_optimization(
                 candidate_path.write_text(edit.source)
                 before_score = best_score
                 before_summary = best_summary
-                candidate_summary = evaluate_kernel(
-                    edit.source,
-                    op=op,
-                    reps=int(edit.harness["reps"]),
-                    warmup=int(edit.harness["warmup"]),
-                )
+                eval_error = None
+                try:
+                    candidate_summary = evaluate_kernel(
+                        edit.source,
+                        op=op,
+                        reps=int(edit.harness["reps"]),
+                        warmup=int(edit.harness["warmup"]),
+                    )
+                except Exception as exc:  # noqa: BLE001 - model kernels can fail in many ways.
+                    eval_error = {
+                        "type": type(exc).__name__,
+                        "message": str(exc),
+                    }
+                    candidate_summary = failed_evaluation_summary(exc)
                 candidate_score = score(candidate_summary)
-                accepted = accept_candidate(candidate_score, best_score)
+                accepted = eval_error is None and accept_candidate(candidate_score, best_score)
                 if accepted:
                     accepted_count += 1
                     best_source = edit.source
@@ -145,6 +168,7 @@ def run_optimization(
                             "score": candidate_score,
                             "delta_vs_best": score_delta(candidate_score, before_score),
                             "accepted": accepted,
+                            "eval_error": eval_error,
                             "summary": candidate_summary,
                         },
                         sort_keys=True,
