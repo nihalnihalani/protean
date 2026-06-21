@@ -4,12 +4,22 @@ An overnight GPU-kernel optimizer with a verifier you can trust.
 
 Protean starts from a working Triton kernel, generates edits, grades every candidate on correctness and speed, keeps only improvements, and writes an audit trail of every attempt. The hackathon demo is intentionally lean: prove the verifier and loop work on real GPU hardware, then use that loop for model-backed kernel improvement.
 
-**Live dashboard:** <https://protean-khaki.vercel.app>  
-**Demo video:** <https://youtu.be/qDc0QZqu7q4>
+<div align="center">
 
-![NVIDIA B200 live utilization during optimizer trials](assets/b200_gpu_utilization.png)
+### Demo Window
 
-The screenshot above is the Modal B200 run pattern Protean is built around: short bursts to 100% GPU utilization while candidate kernels compile, launch, and benchmark, with the verifier logging correctness, latency, speedup, reward, and accept/reject after every trial.
+<a href="https://youtu.be/qDc0QZqu7q4">
+  <img src="https://img.youtube.com/vi/qDc0QZqu7q4/maxresdefault.jpg" alt="Protean demo video on YouTube" width="720">
+</a>
+
+**Watch the demo:** <https://youtu.be/qDc0QZqu7q4>  
+**Live dashboard:** <https://protean-khaki.vercel.app>
+
+<img src="assets/b200_gpu_utilization.png" alt="NVIDIA B200 live utilization during optimizer trials" width="920">
+
+</div>
+
+The B200 screenshot above is the Modal run pattern Protean is built around: short bursts to 100% GPU utilization while candidate kernels compile, launch, and benchmark, with the verifier logging correctness, latency, speedup, reward, and accept/reject after every trial.
 
 ## The Demo In One Sentence
 
