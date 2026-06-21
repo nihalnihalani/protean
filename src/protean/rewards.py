@@ -1,65 +1,123 @@
-"""Protean — stub extracted from docs/IMPLEMENTATION_PLAN.md (section 4). Fill in TODOs to implement."""
+"""Structured reward for Protean's verifier-first MVP."""
 
-# rewards.py  — baked ONLY to /donotaccess/rewards.py
-import json, os, hashlib
+from __future__ import annotations
 
-_CANONICAL_CFG_PATH = "/donotaccess/reward_config.json"
-_LOCAL_CFG_PATH = os.path.join(os.path.dirname(__file__), "reward_config.json")
+import json
+import math
+from pathlib import Path
+from dataclasses import dataclass
+from typing import Any
 
-def _cfg():
-    # Prefer the canonical moat path in production; fall back to in-package for local dev.
-    path = _CANONICAL_CFG_PATH if os.path.exists(_CANONICAL_CFG_PATH) else _LOCAL_CFG_PATH
-    with open(path) as f:
-        return json.load(f)
 
-def compute_reward(*, correct: bool, speedup: float, pr_frac: float,
-                   launches_timed: int, dtype_ok: bool, shape_ok: bool,
-                   step: int = 0) -> dict:
+@dataclass(frozen=True)
+class RewardConfig:
+    p_target: float = 1.5
+    speedup_floor: float = 1.1
+    speedup_cap: float = 20.0
+    correct_floor: float = 0.3
+    speedup_reward_weight: float = 1.5
+    pr_bonus: float = 0.2
+    max_reward: float = 2.0
+
+
+DEFAULT_CONFIG = RewardConfig()
+CANONICAL_CONFIG_PATH = Path("/donotaccess/reward_config.json")
+LOCAL_CONFIG_PATH = Path(__file__).with_name("reward_config.json")
+
+
+def _config_path() -> Path:
+    if CANONICAL_CONFIG_PATH.exists():
+        return CANONICAL_CONFIG_PATH
+    return LOCAL_CONFIG_PATH
+
+
+def load_reward_config() -> RewardConfig:
+    """Load reward thresholds from the hidden production config or local dev copy."""
+
+    path = _config_path()
+    if not path.exists():
+        raise FileNotFoundError(f"reward config is missing: {path}")
+    data = json.loads(path.read_text())
+    return RewardConfig(
+        p_target=float(data.get("P_TARGET", data.get("p_target", DEFAULT_CONFIG.p_target))),
+        speedup_floor=float(data.get("SPEEDUP_FLOOR", data.get("speedup_floor", DEFAULT_CONFIG.speedup_floor))),
+        speedup_cap=float(data.get("SPEEDUP_CAP", data.get("speedup_cap", DEFAULT_CONFIG.speedup_cap))),
+        correct_floor=float(data.get("CORRECT_FLOOR", data.get("correct_floor", DEFAULT_CONFIG.correct_floor))),
+        speedup_reward_weight=float(
+            data.get("SPEEDUP_REWARD_WEIGHT", data.get("speedup_reward_weight", DEFAULT_CONFIG.speedup_reward_weight))
+        ),
+        pr_bonus=float(data.get("PR_BONUS", data.get("pr_bonus", DEFAULT_CONFIG.pr_bonus))),
+        max_reward=float(data.get("MAX_REWARD", data.get("max_reward", DEFAULT_CONFIG.max_reward))),
+    )
+
+
+def compute_reward(
+    *,
+    correct: bool,
+    speedup: float,
+    launches_timed: int,
+    dtype_ok: bool,
+    shape_ok: bool,
+    split: str,
+    t_eager_ms: float | None = None,
+    t_kernel_ms: float | None = None,
+    pr_frac: float = 0.0,
+    caps: list[str] | None = None,
+    config: RewardConfig | None = None,
+) -> dict[str, Any]:
+    """Return the public grade payload.
+
+    Correctness, dtype/shape integrity, and real Triton execution are hard
+    gates. Correct kernels earn a small floor, then a continuous log-scaled
+    speedup reward. Log scaling keeps 2x < 6x < 12x while damping timing
+    outliers, so the optimizer still sees meaningful gains after clearing a
+    threshold.
     """
-    CANONICAL formula. Bounded [0, 2.0] for GRPO stability.
-    Imported byte-identically by grade.py AND (via grade_kernel) by the trainer.
 
-    daVinci PR is an ADDITIVE BONUS (matches Eq1 continuity), NOT a multiplicative
-    gate during the learning phase. The only hard zeros are the ROBUST gates:
-    correctness and launch-count. This prevents zeroing correct-but-slow early-7B
-    kernels (the gradient-collapse failure mode).
-    """
-    c = _cfg()
-    P_TARGET      = c["P_TARGET"]        # 1.5
-    SPEEDUP_FLOOR = c["SPEEDUP_FLOOR"]   # 1.1  dead-band (anti dtype/noise)
-    SPEEDUP_CAP   = c["SPEEDUP_CAP"]     # 20.0 hard backstop vs cache-exploit fake speedups
-    CORRECT_FLOOR = c["CORRECT_FLOOR"]   # 0.3  (Kevin) keeps reward dense
-    PR_BONUS      = c["PR_BONUS"]        # 0.2
-    TAU           = c["TAU"]             # 0.5  PR dominance threshold
-    PR_HARD_GATE  = c.get("PR_HARD_GATE_AFTER_STEP", 10**9)  # default off; flip to 50 only if hack observed
+    caps = list(caps or [])
+    config = config or load_reward_config()
+    if not correct:
+        caps.append("incorrect")
+    if not dtype_ok:
+        caps.append("dtype_mismatch")
+    if not shape_ok:
+        caps.append("shape_mismatch")
+    if launches_timed <= 0 and not caps:
+        caps.append("no_triton_jit")
 
-    caps = []
-    # ---- ROBUST HARD ZEROS (never penalize a correct-but-slow kernel on PR) ----
-    if not (correct and dtype_ok and shape_ok):
-        return {"reward": 0.0, "caps": ["incorrect"], "speedup": speedup, "pr": pr_frac}
-    if launches_timed <= 0:
-        return {"reward": 0.0, "caps": ["no_triton_launch"], "speedup": speedup, "pr": pr_frac}
+    hard_failed = bool(caps)
+    speedup_reward = 0.0
+    speedup_score = 0.0
+    correctness_reward = config.correct_floor if correct and dtype_ok and shape_ok else 0.0
 
-    # ---- OPTIONAL phase-2 PR dominance gate (config-flippable, off by default) ----
-    pr_ok = (pr_frac > TAU)
-    if step >= PR_HARD_GATE and not pr_ok:
-        return {"reward": 0.0, "caps": ["pr_dominance_gate"], "speedup": speedup, "pr": pr_frac}
+    if not hard_failed and speedup >= config.speedup_floor:
+        capped_speedup = max(config.speedup_floor, min(float(speedup), config.speedup_cap))
+        denominator = math.log(config.speedup_cap / config.speedup_floor)
+        speedup_score = math.log(capped_speedup / config.speedup_floor) / denominator if denominator > 0 else 0.0
+        speedup_score = max(0.0, min(speedup_score, 1.0))
+        speedup_reward = config.speedup_reward_weight * speedup_score
+    elif correct and dtype_ok and shape_ok and speedup < config.speedup_floor:
+        caps.append("below_speedup_floor")
 
-    # ---- speedup score (dead-band, normalized, capped) ----
-    if speedup < SPEEDUP_FLOOR:
-        speedup_score = 0.0
-    else:
-        speedup_score = min(speedup, SPEEDUP_CAP) / P_TARGET
+    pr_clamped = max(0.0, min(float(pr_frac), 1.0))
+    reward = correctness_reward + speedup_reward + (config.pr_bonus * pr_clamped if not hard_failed else 0.0)
+    if hard_failed:
+        reward = 0.0
 
-    pr_term = PR_BONUS * max(0.0, min(pr_frac, 1.0))   # additive bonus, never a killer
-    reward = CORRECT_FLOOR + speedup_score + pr_term
-    reward = max(0.0, min(reward, 2.0))
-    return {"reward": reward, "caps": caps, "speedup": speedup, "pr": pr_frac}
-
-
-# Optional bootstrap credit (anneals out) — ONLY used if calibration is too sparse.
-def bootstrap_credit(compiles: bool, imports_triton: bool, step: int, anneal_steps: int = 40) -> float:
-    if step >= anneal_steps:
-        return 0.0
-    bonus = (0.1 if compiles else 0.0) + (0.2 if imports_triton else 0.0)
-    return bonus * (1.0 - step / anneal_steps)
+    return {
+        "reward": round(min(reward, config.max_reward), 6),
+        "correct": bool(correct),
+        "speedup": round(float(speedup), 6) if speedup is not None else 0.0,
+        "t_eager_ms": round(float(t_eager_ms), 6) if t_eager_ms is not None else None,
+        "t_kernel_ms": round(float(t_kernel_ms), 6) if t_kernel_ms is not None else None,
+        "pr_frac": round(pr_clamped, 6),
+        "speedup_score": round(speedup_score, 6),
+        "correctness_reward": round(correctness_reward, 6),
+        "speedup_reward": round(speedup_reward, 6),
+        "pr_reward": round(config.pr_bonus * pr_clamped if not hard_failed else 0.0, 6),
+        "split": split,
+        "caps": sorted(set(caps)),
+        "launches_timed": int(launches_timed),
+        "dtype_ok": bool(dtype_ok),
+        "shape_ok": bool(shape_ok),
+    }
