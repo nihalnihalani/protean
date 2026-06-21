@@ -147,7 +147,7 @@ Acceptance criteria:
 
 - [x] HUD environment deploy succeeds.
 - [x] Taskset appears on the HUD dashboard as `protean-kernel-optimizer`.
-- [x] All six task rows are present, including `softmax_rows`.
+- [x] The expanded HUD grid is present: 12 ops x 2 splits x 42 shape variants = 1008 rows.
 - [ ] `--group 3` remote eval completes without operator interruption.
 
 Verified HUD platform artifacts:
@@ -158,7 +158,7 @@ taskset:     https://hud.ai/tasksets/6d2feb10-b23c-4928-a1f9-e8b53db364d7
 active env:  https://hud.ai/environments/32bb1f0c-0737-4a58-8a5e-5c9ec8a2f01b
 active set:  https://hud.ai/tasksets/3f2d2423-72d4-4541-bb18-b78e31151676
 deploy:      image version 1, v6 control channel introspection OK
-sync:        6 created, 0 updated under the active HUD key
+sync:        taskset source now defines 1008 rows under the active HUD key
 ```
 
 ## GRPO Stretch Controls

@@ -113,6 +113,9 @@ Verified platform artifacts:
 - active verified taskset: https://hud.ai/tasksets/3f2d2423-72d4-4541-bb18-b78e31151676
 - active all-ops grouped live job: https://hud.ai/jobs/3eda0cb665df40f6a3f25a89460819ae
 
+Current HUD source defines `12 ops x 2 splits x 42 shape variants = 1008` task rows. Task ids use
+`<op>_<split>_s<shape>_v<variant>`, for example `elementwise_add_relu_train_s1024_v04`.
+
 ## Layer 4: Model-Backed Edits
 
 Status: wired, requires `FIREWORKS_API_KEY` for new runs.

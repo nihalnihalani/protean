@@ -45,7 +45,7 @@ Severity: 5 = breaks platform/training; 3 = degrades; 1 = cosmetic.
 | Two-yield `@env.template` | Yes | **Yes — correct** (env.py L127-130, reward produced *inside* the generator) | none | — |
 | `EvaluationResult`/`SubScore` | reward, **done**, **content**, subscores, info, metadata, isError | reward + subscores + info only (grader.py L115-126) | missing `done=True`, `content`, per-subscore `metadata` | 4 |
 | `hud deploy` | Yes | Yes — env live (`32bb1f0c…`) | succeeded once; serve CMD undocumented | 4 |
-| `hud sync` tasks | Yes | Yes — 6 tasks synced | only 3 of 12 ops published (6/24 tasks) | 3 |
+| `hud sync` tasks | Yes | Yes — source now defines 1008 rows | re-sync active HUD taskset after grid expansion | 2 |
 | Serve entrypoint | `hud serve env:env` (all 3 templates) | `env.run()` (Dockerfile L79) | not the v6 documented CMD; undocumented method | 5 |
 | `LocalRuntime` streaming | Yes | **Yes — rich** (hud_stream.py: Job.start + Taskset + ~9 Step trace) | none (this is the strong part) | — |
 | `HUDRuntime` / platform eval | Yes | **No** — grouped remote eval never completed | leaderboard path unproven (OPEN_ISSUES #6) | 5 |
@@ -95,7 +95,9 @@ Add `done`/`content` to the fallback stub dataclass (grader.py L109-113) too, so
 
 **G8 — MEDIUM — `Environment=None` fallback (env.py L14-17, gating L123).** Hard-import `from hud import Environment` like both templates; move no-HUD stubs into a test `conftest`. The current broad `except Exception` silently yields a zero-template env on *any* import failure while CI stays green.
 
-**G9 — MEDIUM — Only 6/24 tasks synced.** Verify all 12 ops have valid `donotaccess/grade.py`+`reference.py` (Dockerfile L64-69 only tests 3 ops), regenerate `manifest_v1.jsonl` + `MANIFEST_SHA256`, re-`hud sync`. Or explicitly scope the public benchmark to 3 ops.
+**G9 — RESOLVED IN SOURCE — Expand public HUD rows.** `src/protean/env.py` now defines
+`12 ops x 2 splits x 42 shape variants = 1008` task rows. Re-run `hud sync tasks protean-kernel-optimizer src/protean/env.py --yes`
+to update the active HUD taskset.
 
 **G10 — MEDIUM — `asyncio.run()` per call (hud_stream.py L158, L363).** Expose pure-async `_start_session_async`/`_stream_candidate_async` as the public API; reserve `asyncio.run` for a top-level CLI shim. Required before any `TrainingClient` loop (which is async).
 

@@ -77,7 +77,9 @@ HUD deployment and taskset sync are complete:
 
 - environment: https://hud.ai/environments/9907b272-ef58-4f57-9cd3-5dbcb37dd51e
 - taskset: https://hud.ai/tasksets/6d2feb10-b23c-4928-a1f9-e8b53db364d7
-- task ids: `elementwise_add_relu_train`, `elementwise_add_relu_held_out`, `rmsnorm_train`, `rmsnorm_held_out`
+- task grid: `12 ops x 2 splits x 42 shape variants = 1008 rows`
+- task id pattern: `<op>_<split>_s<shape>_v<variant>`
+- examples: `elementwise_add_relu_train_s1024_v04`, `rmsnorm_held_out_s3089_v18`
 
 The remaining platform check is a grouped remote eval that exits cleanly from the CLI:
 

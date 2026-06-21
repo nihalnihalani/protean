@@ -32,7 +32,13 @@ class HudStreamSession:
 
 
 def _task_slugs_for_op(op: str) -> list[str]:
-    return [f"{op}_train", f"{op}_held_out"]
+    from protean.env import HUD_TASKS
+
+    slugs = []
+    for split in ("train", "held_out"):
+        match = next(task["id"] for task in HUD_TASKS if task["op"] == op and task["split"] == split)
+        slugs.append(match)
+    return slugs
 
 
 def _read_hud_user_env(path: Path | None = None) -> str | None:

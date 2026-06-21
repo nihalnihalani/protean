@@ -17,10 +17,37 @@ except Exception:  # pragma: no cover - local tests should not require HUD.
     Environment = None
 
 
+HUD_VARIANTS_PER_SPLIT = 42
+
+
+def hud_shapes_for_split(split: str) -> tuple[int, ...]:
+    """Large deterministic HUD shape grid.
+
+    The small verifier dev split remains in ``splits.py``. HUD exposes a wider
+    row set so the public taskset is large enough for dashboards, grouping, and
+    training signal.
+    """
+
+    if split == "train":
+        # Includes the dev train shapes 1024, 2048, and 4096.
+        return tuple(512 + 128 * idx for idx in range(HUD_VARIANTS_PER_SPLIT))
+    if split == "held_out":
+        # Deliberately off the 64/128 tiling grid; includes no train shapes.
+        return tuple(785 + 128 * idx for idx in range(HUD_VARIANTS_PER_SPLIT))
+    raise ValueError(f"unknown split: {split}")
+
+
 HUD_TASKS = tuple(
-    {"id": f"{op.name}_{split}", "op": op.name, "split": split}
+    {
+        "id": f"{op.name}_{split}_s{shape}_v{variant:02d}",
+        "op": op.name,
+        "split": split,
+        "shape": shape,
+        "variant": variant,
+    }
     for op in OPS
     for split in ("train", "held_out")
+    for variant, shape in enumerate(hud_shapes_for_split(split))
 )
 
 
@@ -54,8 +81,9 @@ def _read_prompt(op: str) -> str:
     return path.read_text()
 
 
-def hud_prompt(op: str, split: str, shape: int | None = None) -> str:
+def hud_prompt(op: str, split: str, shape: int | None = None, variant: int | None = None) -> str:
     shape = shape or shapes_for_split(split)[0]
+    variant_text = "default" if variant is None else str(variant)
     return (
         _read_prompt(op)
         + "\n\n"
@@ -63,20 +91,30 @@ def hud_prompt(op: str, split: str, shape: int | None = None) -> str:
         + f"- op: {op}\n"
         + f"- split: {split}\n"
         + f"- shape: {shape}\n"
+        + f"- variant: {variant_text}\n"
         + "- reward info includes correctness, speedup, eager timing, kernel timing, and anti-hack caps.\n"
     )
 
 
-def grade_hud_source(source: str, *, op: str, split: str, shape: int | None = None) -> dict[str, Any]:
+def grade_hud_source(
+    source: str,
+    *,
+    op: str,
+    split: str,
+    shape: int | None = None,
+    variant: int | None = None,
+) -> dict[str, Any]:
     shape = shape or shapes_for_split(split)[0]
     grade = grade_source(source or "", op=op, split=split, shape=shape)
+    task_id = f"{op}_{split}" if variant is None else f"{op}_{split}_s{shape}_v{variant:02d}"
     return {
         **grade,
         "hud": {
-            "task_id": f"{op}_{split}",
+            "task_id": task_id,
             "op": op,
             "split": split,
             "shape": shape,
+            "variant": variant,
             "reward": grade["reward"],
             "correct": grade["correct"],
             "speedup": grade["speedup"],
@@ -90,11 +128,9 @@ def grade_hud_source(source: str, *, op: str, split: str, shape: int | None = No
 def task_metadata() -> list[dict[str, Any]]:
     rows = []
     for task in HUD_TASKS:
-        split = task["split"]
         rows.append(
             {
                 **task,
-                "shape": shapes_for_split(split)[0],
                 "prompt_path": get_op(task["op"]).prompt_path,
             }
         )
@@ -127,7 +163,9 @@ if env is not None:
         async def _op_template(split: str = "train", shape: int | None = None):
             get_op(op_name)
             source = yield hud_prompt(op_name, split, shape)
-            yield to_eval_result(grade_hud_source(source or "", op=op_name, split=split, shape=shape))
+            yield to_eval_result(
+                grade_hud_source(source or "", op=op_name, split=split, shape=shape)
+            )
 
         _op_template.__name__ = op_name
         _op_template.__qualname__ = op_name
@@ -136,11 +174,19 @@ if env is not None:
     for _op_spec in OPS:
         _template_fn = _register_op_template(_op_spec.name)
         globals()[_op_spec.name] = _template_fn
-        for _split in ("train", "held_out"):
-            _task_slug = f"{_op_spec.name}_{_split}"
-            _task = _template_fn(split=_split)
+        for _task_def in [task for task in HUD_TASKS if task["op"] == _op_spec.name]:
+            _task_slug = _task_def["id"]
+            _task = _template_fn(
+                split=_task_def["split"],
+                shape=_task_def["shape"],
+            )
             _task.slug = _task_slug
-            _task.columns = {"op": _op_spec.name, "split": _split}
+            _task.columns = {
+                "op": _op_spec.name,
+                "split": _task_def["split"],
+                "shape": _task_def["shape"],
+                "variant": _task_def["variant"],
+            }
             globals()[_task_slug] = _task
 else:
     for _op_spec in OPS:
@@ -151,7 +197,7 @@ else:
 
 # Backward-compatible metadata alias used by older imports. Keep it non-Task so
 # HUD task discovery does not count it as a duplicate public task.
-kernel_opt = {"id": "elementwise_add_relu_train", "op": "elementwise_add_relu", "split": "train"}
+kernel_opt = {"id": "elementwise_add_relu_train_s1024_v04", "op": "elementwise_add_relu", "split": "train"}
 
 
 def main() -> int:

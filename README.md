@@ -172,14 +172,28 @@ hud eval protean-kernel-optimizer claude --full --group 3 --max-concurrent 4
 
 ## Public HUD Tasks
 
-| HUD task id | Op | Split | Default shape |
+Protean publishes a large deterministic HUD grid:
+
+```text
+12 ops x 2 splits x 42 shape variants = 1008 HUD task rows
+```
+
+Task ids follow:
+
+```text
+<op>_<split>_s<shape>_v<variant>
+```
+
+Examples:
+
+| HUD task id | Op | Split | Shape |
 |---|---|---|---:|
-| `elementwise_add_relu_train` | `elementwise_add_relu` | train | 1024 |
-| `elementwise_add_relu_held_out` | `elementwise_add_relu` | held-out | 1536 |
-| `rmsnorm_train` | `rmsnorm` | train | 1024 |
-| `rmsnorm_held_out` | `rmsnorm` | held-out | 1536 |
-| `softmax_rows_train` | `softmax_rows` | train | 1024 |
-| `softmax_rows_held_out` | `softmax_rows` | held-out | 1536 |
+| `elementwise_add_relu_train_s1024_v04` | `elementwise_add_relu` | train | 1024 |
+| `elementwise_add_relu_held_out_s1553_v06` | `elementwise_add_relu` | held-out | 1553 |
+| `rmsnorm_train_s2048_v12` | `rmsnorm` | train | 2048 |
+| `rmsnorm_held_out_s3089_v18` | `rmsnorm` | held-out | 3089 |
+| `softmax_rows_train_s4096_v28` | `softmax_rows` | train | 4096 |
+| `prefix_scan_held_out_s6033_v41` | `prefix_scan` | held-out | 6033 |
 
 ## HUD Control Plane
 
@@ -187,7 +201,7 @@ Protean uses HUD as the public eval/training control plane:
 
 | HUD surface | Protean usage |
 |---|---|
-| Tasksets | Six stable task rows: three ops times train/held-out |
+| Tasksets | 1008 stable task rows: 12 ops times train/held-out times 42 shape variants |
 | Jobs | One optimizer run opens one HUD job/session |
 | Traces | Every candidate records model response, 1M controller decision when available, saved file, AST check, compile status, correctness, timing, reward, and accept/reject |
 | Subscores | HUD-normalized `0..1` components for reward, correctness, speedup, held-out, anti-hack, and compile success |
@@ -201,7 +215,7 @@ HUD-facing reward is normalized to `0..1`. The raw Protean reward remains in `in
 | Artifact | Purpose |
 |---|---|
 | [Current HUD environment](https://hud.ai/environments/32bb1f0c-0737-4a58-8a5e-5c9ec8a2f01b) | Deployed and introspected Protean HUD environment with 3 templates |
-| [Current HUD taskset](https://hud.ai/tasksets/3f2d2423-72d4-4541-bb18-b78e31151676) | Synced `protean-kernel-optimizer` taskset with all six rows |
+| [Current HUD taskset](https://hud.ai/tasksets/3f2d2423-72d4-4541-bb18-b78e31151676) | Synced `protean-kernel-optimizer` taskset; current source defines 1008 rows |
 | [Requested HUD environment](https://hud.ai/environments/9907b272-ef58-4f57-9cd3-5dbcb37dd51e) | Earlier public environment URL supplied for the demo |
 | [Requested HUD taskset](https://hud.ai/tasksets/6d2feb10-b23c-4928-a1f9-e8b53db364d7) | Earlier public taskset URL supplied for the demo |
 | [HUD all-ops grouped live job](https://hud.ai/jobs/3eda0cb665df40f6a3f25a89460819ae) | Spark `group=2` live optimizer run across all three ops |

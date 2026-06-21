@@ -1,13 +1,18 @@
-from protean.env import HUD_TASKS, grade_hud_source, hud_prompt, task_metadata
+from protean.env import HUD_TASKS, HUD_VARIANTS_PER_SPLIT, grade_hud_source, hud_prompt, task_metadata
 from protean.grader import optimizer_reward, to_eval_result
 from protean.kernels import PYTORCH_PASSTHROUGH
 from protean.task_catalog import OPS
 
 
-def test_hud_exposes_task_ids_for_every_registered_op():
+def test_hud_exposes_1000_plus_task_ids_for_every_registered_op():
     ids = {task["id"] for task in HUD_TASKS}
-    expected = {f"{op.name}_{split}" for op in OPS for split in ("train", "held_out")}
-    assert ids == expected
+    expected_count = len(OPS) * 2 * HUD_VARIANTS_PER_SPLIT
+    assert len(HUD_TASKS) == expected_count
+    assert len(HUD_TASKS) >= 1000
+    assert len(ids) == expected_count
+    for op in OPS:
+        assert any(task["op"] == op.name and task["split"] == "train" for task in HUD_TASKS)
+        assert any(task["op"] == op.name and task["split"] == "held_out" for task in HUD_TASKS)
 
 
 def test_hud_prompt_includes_metadata():
@@ -15,6 +20,7 @@ def test_hud_prompt_includes_metadata():
     assert "op: rmsnorm" in prompt
     assert "split: held_out" in prompt
     assert "shape: 1536" in prompt
+    assert "variant:" in prompt
 
 
 def test_hud_grade_metadata_contains_reward_fields():
@@ -28,8 +34,9 @@ def test_hud_grade_metadata_contains_reward_fields():
 
 def test_task_metadata_lists_prompt_paths():
     rows = task_metadata()
-    assert len(rows) == len(OPS) * 2
+    assert len(rows) == len(OPS) * 2 * HUD_VARIANTS_PER_SPLIT
     assert all(row["prompt_path"].endswith("prompt.md") for row in rows)
+    assert all("shape" in row and "variant" in row for row in rows)
 
 
 def test_hud_eval_result_uses_continuous_percent_and_keeps_internal_reward():

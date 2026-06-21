@@ -11,9 +11,8 @@ kernel_opt = _env_mod.kernel_opt
 
 for _op in OPS:
     globals()[_op.name] = getattr(_env_mod, _op.name)
-    for _split in ("train", "held_out"):
-        _slug = f"{_op.name}_{_split}"
-        globals()[_slug] = getattr(_env_mod, _slug)
+for _task in _env_mod.HUD_TASKS:
+    globals()[_task["id"]] = getattr(_env_mod, _task["id"])
 
 MANIFEST_PATH = "manifest_v1.jsonl"
 MANIFEST_SHA256 = "a5771e24f78b44d3a3406fb13e6342cdede382b8a634a56177a5db25ef666ed1"

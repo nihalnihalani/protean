@@ -159,6 +159,8 @@ async def _run(args: argparse.Namespace) -> int:
     taskset = Taskset.from_api(args.taskset) if args.taskset else Taskset.from_file(args.source)
     if args.task_ids:
         taskset = taskset.filter(slug.strip() for slug in args.task_ids.split(",") if slug.strip())
+    elif args.limit:
+        taskset = taskset.filter((task.slug or task.default_slug()) for task in list(taskset)[: args.limit])
     job = await taskset.run(
         ProteanDemoAgent(),
         runtime=LocalRuntime(args.source),
@@ -230,6 +232,7 @@ def main() -> int:
     parser.add_argument("--source", default="src/protean/env.py")
     parser.add_argument("--taskset", help="HUD taskset slug or id to attach this eval job to.")
     parser.add_argument("--task-ids", help="Comma-separated task slugs to run from the taskset.")
+    parser.add_argument("--limit", type=int, help="Run only the first N task rows from the selected taskset.")
     parser.add_argument("--out", default="demo/hud-demo-agent-results.json")
     parser.add_argument("--group", type=int, default=1)
     parser.add_argument("--max-concurrent", type=int, default=1)
