@@ -1,27 +1,60 @@
-"""The frozen registry of ~5 fixed fused ops Protean trains on.
+"""Task catalog for the verifier-first MVP.
 
-See docs/IMPLEMENTATION_PLAN.md §4.1 / §4.6. Each OpSpec binds an eager reference,
-dtype, allclose tolerances, and the speedup target/floor used by rewards.py.
+The first submission target is deliberately narrow: one fused op with a real
+reference, a known-good Triton implementation, and train/held-out shapes.
 """
-from __future__ import annotations  # NOTE: keep OUT of env.py (it breaks @env.template typed params) — fine here.
+
+from __future__ import annotations
+
 from dataclasses import dataclass
 
 
 @dataclass(frozen=True)
 class OpSpec:
-    op_name: str
-    reference_module: str   # dotted path to hidden donotaccess/reference.py providing eager_fn(*tensors)
-    dtype: str              # e.g. "float16"
+    name: str
+    dtype: str
     rtol: float
     atol: float
-    p_target: float         # speedup at which the speedup-reward saturates (=1.0). plan: P_TARGET≈1.5
-    speedup_floor: float    # below this, treat as no speedup. plan: 1.1
-    prompt_path: str        # tasks/<op>/prompt.md
+    p_target: float
+    speedup_floor: float
+    prompt_path: str
 
 
-OPS = [
-    OpSpec("elementwise_add_relu", "protean.tasks.elementwise_add_relu.donotaccess.reference",
-           "float16", 1e-2, 1e-2, 1.5, 1.1, "tasks/elementwise_add_relu/prompt.md"),
-]
+OPS = (
+    OpSpec(
+        name="elementwise_add_relu",
+        dtype="float16",
+        rtol=1e-2,
+        atol=1e-2,
+        p_target=1.5,
+        speedup_floor=1.1,
+        prompt_path="src/protean/tasks/elementwise_add_relu/prompt.md",
+    ),
+    OpSpec(
+        name="rmsnorm",
+        dtype="float16",
+        rtol=1e-2,
+        atol=1e-2,
+        p_target=1.2,
+        speedup_floor=1.05,
+        prompt_path="src/protean/tasks/rmsnorm/prompt.md",
+    ),
+    OpSpec(
+        name="softmax_rows",
+        dtype="float16",
+        rtol=1e-2,
+        atol=1e-2,
+        p_target=1.5,
+        speedup_floor=1.1,
+        prompt_path="src/protean/tasks/softmax_rows/prompt.md",
+    ),
+)
 
-OPS_BY_NAME = {o.op_name: o for o in OPS}
+OPS_BY_NAME = {op.name: op for op in OPS}
+
+
+def get_op(name: str) -> OpSpec:
+    try:
+        return OPS_BY_NAME[name]
+    except KeyError as exc:
+        raise ValueError(f"unknown op: {name}") from exc

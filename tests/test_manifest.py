@@ -1,119 +1,45 @@
-"""Tests for the manifest freeze/load pipeline (Step 11).
-
-Validates:
-  - freeze() produces valid JSONL with correct row counts
-  - Train shapes ∈ TRAIN_M, test shapes ∈ TEST_M (split invariant)
-  - Deterministic: same inputs produce identical output
-  - load_frozen_manifest returns [] for missing files
-  - Manifest rows include M, N, op, split, dtype fields
-"""
-import os
 import json
-import tempfile
-import sys
+from pathlib import Path
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
+import pytest
 
-from protean.manifest import freeze, load_frozen_manifest
-from protean.splits import TRAIN_M, TEST_M
-
-
-def test_freeze_produces_valid_jsonl():
-    with tempfile.TemporaryDirectory() as tmpdir:
-        path = os.path.join(tmpdir, "test_manifest.jsonl")
-        freeze(["elementwise_add_relu"], n_per_op=4, path=path)
-
-        assert os.path.exists(path)
-
-        rows = []
-        with open(path) as f:
-            for line in f:
-                rows.append(json.loads(line))
-
-        # 4 train + 4 test = 8 rows for one op
-        assert len(rows) == 8
-        assert sum(1 for r in rows if r["split"] == "train") == 4
-        assert sum(1 for r in rows if r["split"] == "test") == 4
+from protean.manifest import freeze, load_frozen_manifest, sha256_file
+from protean.splits import HELD_OUT_SHAPES, TRAIN_SHAPES
+from protean.tasks import MANIFEST_SHA256, TASKS
 
 
-def test_freeze_respects_split_invariant():
-    with tempfile.TemporaryDirectory() as tmpdir:
-        path = os.path.join(tmpdir, "test_manifest.jsonl")
-        freeze(["elementwise_add_relu"], n_per_op=8, path=path)
-
-        rows = []
-        with open(path) as f:
-            for line in f:
-                rows.append(json.loads(line))
-
-        for row in rows:
-            if row["split"] == "train":
-                assert row["M"] in TRAIN_M, f"Train M={row['M']} not in TRAIN_M={TRAIN_M}"
-                assert row["N"] in TRAIN_M
-            elif row["split"] == "test":
-                assert row["M"] in TEST_M, f"Test M={row['M']} not in TEST_M={TEST_M}"
-                assert row["N"] in TEST_M
+def test_committed_manifest_is_pinned():
+    assert Path("manifest_v1.jsonl").exists()
+    assert sha256_file("manifest_v1.jsonl") == MANIFEST_SHA256
+    assert len(TASKS) == 72
 
 
-def test_freeze_is_deterministic():
-    """Same op + idx + split must produce same shape across freeze calls."""
-    with tempfile.TemporaryDirectory() as tmpdir:
-        path1 = os.path.join(tmpdir, "m1.jsonl")
-        path2 = os.path.join(tmpdir, "m2.jsonl")
-        freeze(["elementwise_add_relu"], n_per_op=4, path=path1)
-        freeze(["elementwise_add_relu"], n_per_op=4, path=path2)
-
-        with open(path1) as f1, open(path2) as f2:
-            r1 = [json.loads(line) for line in f1]
-            r2 = [json.loads(line) for line in f2]
-
-        assert r1 == r2, "Freeze must be deterministic"
+def test_freeze_is_deterministic(tmp_path):
+    first = tmp_path / "first.jsonl"
+    second = tmp_path / "second.jsonl"
+    freeze(["elementwise_add_relu"], n_per_split=4, path=first)
+    freeze(["elementwise_add_relu"], n_per_split=4, path=second)
+    assert first.read_text() == second.read_text()
 
 
-def test_load_returns_empty_when_missing():
-    with tempfile.TemporaryDirectory() as tmpdir:
-        path = os.path.join(tmpdir, "does_not_exist.jsonl")
-        rows = load_frozen_manifest(path)
-        assert rows == []
+def test_freeze_preserves_split_shapes(tmp_path):
+    path = tmp_path / "manifest.jsonl"
+    freeze(["elementwise_add_relu"], n_per_split=8, path=path)
+    rows = [json.loads(line) for line in path.read_text().splitlines()]
+    assert len(rows) == 16
+    for row in rows:
+        if row["split"] == "train":
+            assert row["shape"] in TRAIN_SHAPES
+        else:
+            assert row["shape"] in HELD_OUT_SHAPES
 
 
-def test_freeze_roundtrip():
-    """Freeze then load must return the same rows."""
-    with tempfile.TemporaryDirectory() as tmpdir:
-        path = os.path.join(tmpdir, "roundtrip.jsonl")
-        freeze(["elementwise_add_relu"], n_per_op=4, path=path)
-        rows = load_frozen_manifest(path)
-        assert len(rows) == 8
-        # Verify each row has required fields
-        for row in rows:
-            assert "op" in row
-            assert "split" in row
-            assert "M" in row
-            assert "N" in row
-            assert "dtype" in row
+def test_load_manifest_hash_mismatch_fails(tmp_path):
+    path = tmp_path / "manifest.jsonl"
+    freeze(["elementwise_add_relu"], n_per_split=1, path=path)
+    with pytest.raises(RuntimeError, match="Manifest hash mismatch"):
+        load_frozen_manifest(path, expected_sha256="bad")
 
 
-def test_freeze_multi_op():
-    """Freeze with multiple ops produces correct row counts."""
-    with tempfile.TemporaryDirectory() as tmpdir:
-        path = os.path.join(tmpdir, "multi.jsonl")
-        # Even though we only have one op in the catalog, test the iteration
-        freeze(["elementwise_add_relu"], n_per_op=6, path=path)
-        rows = load_frozen_manifest(path)
-        assert len(rows) == 12  # 6 train + 6 test
-        train_rows = [r for r in rows if r["split"] == "train"]
-        test_rows = [r for r in rows if r["split"] == "test"]
-        assert len(train_rows) == len(test_rows) == 6
-
-
-def test_manifest_rows_have_shapes():
-    """Each manifest row must include M and N dimensions."""
-    with tempfile.TemporaryDirectory() as tmpdir:
-        path = os.path.join(tmpdir, "shapes.jsonl")
-        freeze(["elementwise_add_relu"], n_per_op=4, path=path)
-        rows = load_frozen_manifest(path)
-        for row in rows:
-            assert isinstance(row["M"], int), f"M should be int, got {type(row['M'])}"
-            assert isinstance(row["N"], int), f"N should be int, got {type(row['N'])}"
-            assert row["M"] > 0
-            assert row["N"] > 0
+def test_load_missing_manifest_can_be_allowed(tmp_path):
+    assert load_frozen_manifest(tmp_path / "missing.jsonl", allow_missing=True) == []
