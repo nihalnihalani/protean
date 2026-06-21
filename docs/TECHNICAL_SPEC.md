@@ -153,19 +153,37 @@ The source file remains under `runs/.../candidates/`.
 
 ## 8. HUD Adapter
 
-HUD uses `EvaluationResult(reward=...)`. Protean's reward can exceed `1.0`, while HUD subscores must be `0..1`, so the adapter:
+HUD uses `EvaluationResult(reward=...)`. Protean's internal reward can exceed `1.0`, while HUD rewards/subscores should be `0..1`, so the adapter normalizes the HUD-facing score and preserves the raw Protean reward in metadata:
 
 ```python
 EvaluationResult(
-    reward=protean_reward,
-    subscores=[SubScore(name="reward", value=min(protean_reward, 1.0), weight=1.0)],
-    info=grade_dict,
+    reward=min(protean_reward / 2.0, 1.0),
+    subscores=[
+        SubScore(name="hud_reward", value=hud_reward, weight=1.0),
+        SubScore(name="correctness", value=..., weight=0.0),
+        SubScore(name="speedup", value=..., weight=0.0),
+        SubScore(name="held_out", value=..., weight=0.0),
+        SubScore(name="anti_hack", value=..., weight=0.0),
+        SubScore(name="compile_success", value=..., weight=0.0),
+    ],
+    info={**grade_dict, "protean_reward_raw": protean_reward},
 )
 ```
 
-The main HUD reward remains the Protean reward. The subscore is schema-safe metadata.
+The weighted HUD score is schema-safe. The diagnostic subscores are visible in traces, and the local optimizer still uses the full raw reward in `trials.jsonl`.
 
-## 9. Verified Numbers
+## 9. HUD Optimizer Session
+
+`src/protean/hud_stream.py` turns HUD into the control plane for local/Spark optimizer runs:
+
+1. `start_hud_stream_session(...)` calls `Job.start(...)` once.
+2. Each optimizer trial runs the op's train and held-out HUD tasks under that same job.
+3. A custom HUD agent writes the candidate source into `run.trace.content`.
+4. `run.record(...)` emits live trace steps: model prompt, model response, candidate saved, AST check, compile status, correctness, timing, reward, and accept/reject.
+5. The optimizer logs the shared `hud_stream.job_url` and per-run trace ids in JSONL.
+6. `--hud-group N` repeats each task per candidate, which is the first check for GRPO-style reward spread.
+
+## 10. Verified Numbers
 
 Spark GB10, HUD demo agent:
 
@@ -180,7 +198,12 @@ Passing HUD job:
 
 https://hud.ai/jobs/5a3ddc3f24a748d9abda38866bccb503
 
-## 10. Future Training Spec
+HUD platform deployment:
+
+- environment: https://hud.ai/environments/9907b272-ef58-4f57-9cd3-5dbcb37dd51e
+- taskset: https://hud.ai/tasksets/6d2feb10-b23c-4928-a1f9-e8b53db364d7
+
+## 11. Future Training Spec
 
 The v1 learned layer is a 1,000,005-parameter policy head:
 

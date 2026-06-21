@@ -43,7 +43,28 @@ flowchart TD
 
 HUD job: https://hud.ai/jobs/5a3ddc3f24a748d9abda38866bccb503
 
-## Figure 4: Optimizer Trace Shape
+## Figure 4: HUD Control-Plane Smoke
+
+Spark GB10, local edit policy, one optimizer run, one HUD job:
+
+| Metric | Value |
+|---|---:|
+| HUD job | https://hud.ai/jobs/4e03f95d8eb440989758d9b6d37dc183 |
+| Trials streamed | 5 |
+| Group size | 2 |
+| Rows per trial | 4 |
+| HUD trace ids | 20 |
+| Accepted trials | 1 |
+| Reward standard deviation | 0.037614 |
+
+HUD platform:
+
+| Surface | URL |
+|---|---|
+| Environment | https://hud.ai/environments/9907b272-ef58-4f57-9cd3-5dbcb37dd51e |
+| Taskset | https://hud.ai/tasksets/6d2feb10-b23c-4928-a1f9-e8b53db364d7 |
+
+## Figure 5: Optimizer Trace Shape
 
 ```json
 {

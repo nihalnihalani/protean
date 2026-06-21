@@ -2,16 +2,22 @@ FROM nvidia/cuda:12.4.1-devel-ubuntu22.04
 
 ENV DEBIAN_FRONTEND=noninteractive
 ENV TRITON_CACHE_DIR=/triton-cache
+ENV VIRTUAL_ENV=/opt/venv
+ENV PATH="/opt/venv/bin:${PATH}"
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-        python3.11 python3-pip git util-linux && \
+        python3.11 python3.11-venv python3-pip git util-linux && \
     rm -rf /var/lib/apt/lists/*
 
 RUN mkdir -p /triton-cache && chmod 777 /triton-cache
 
 WORKDIR /app
 COPY . /app
-RUN pip3 install --no-cache-dir -e ".[gpu,hud]"
+RUN python3.11 -m venv /opt/venv && \
+    python -m pip install --no-cache-dir --upgrade pip && \
+    python -m pip install --no-cache-dir "hud-python[agents]==0.6.6" && \
+    python -m pip install --no-cache-dir -e ".[gpu]" && \
+    python -m pip install --no-cache-dir -e . --no-deps
 
 RUN useradd -m -u 1000 agent
 
@@ -47,3 +53,4 @@ RUN find /app/src/protean/tasks -path '*/donotaccess' -type d -exec chmod 700 {}
     chown -R root:root /app/src/protean/tasks
 
 ENV AGENT_UID=1000 AGENT_GID=1000 HOME=/home/agent USER=agent
+CMD ["python", "-c", "from protean.env import env; env.run(host='0.0.0.0', port=8765)"]

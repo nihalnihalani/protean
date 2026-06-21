@@ -31,7 +31,7 @@ flowchart TB
         M["trials.jsonl"]
         N["best_kernel_<op>.py"]
         O["demo/*.json + *.md"]
-        P["HUD per-trial job URLs"]
+        P["HUD optimizer session"]
     end
 
     A --> D
@@ -98,7 +98,7 @@ stateDiagram-v2
 
 Candidate evaluation errors are not fatal. The optimizer catches verifier exceptions, logs `eval_error`, assigns zero score, rejects the candidate, and continues.
 
-If `--stream-hud` is enabled, the optimizer also submits each candidate source to HUD after the local accept/reject decision. HUD receives the same candidate source and grades the train and held-out task for that op. The optimizer logs the returned `hud_stream.job_url`; if HUD is unavailable, it logs `hud_stream_error` and keeps optimizing.
+If `--stream-hud` is enabled, the optimizer opens one HUD job/session for the run, then submits each candidate source to HUD after the local accept/reject decision. HUD receives the same candidate source and grades the train and held-out task for that op. The optimizer logs the returned `hud_stream.job_url`; if HUD is unavailable, it logs `hud_stream_error` and keeps optimizing.
 
 ## HUD Path
 
@@ -117,7 +117,21 @@ The HUD wrapper does not duplicate grading logic. It calls:
 grade_source(source, op=op, split=split, shape=shape)
 ```
 
-Optimizer trial streaming uses `src/protean/hud_stream.py`. It creates a small HUD agent that submits the already-generated candidate source, then runs the two HUD tasks for that op through `LocalRuntime`. This is one HUD job per trial snapshot, not a single live-updating job.
+Optimizer trial streaming uses `src/protean/hud_stream.py`. It starts a `HudStreamSession` backed by `Job.start(...)`, then creates a small HUD agent that submits the already-generated candidate source through `LocalRuntime`. All trial rollouts accumulate under the same HUD job.
+
+Each streamed trial records trace steps for:
+
+- `model_prompt`
+- `model_response`
+- `candidate_saved`
+- `ast_check`
+- `compile`
+- `correctness`
+- `timing`
+- `reward`
+- `accepted` or `rejected`
+
+HUD-facing rewards and subscores are normalized to `0..1`; the raw Protean speed-sensitive reward is preserved in `info.protean_reward_raw` and local JSONL logs.
 
 ## Verified Spark Commands
 
@@ -130,7 +144,8 @@ python scripts/smoke_verifier.py --op elementwise_add_relu
 python scripts/smoke_verifier.py --op rmsnorm
 python scripts/run_optimizer.py --all-ops --max-rounds 1
 HUD_API_KEY=... PYTHONPATH=src python scripts/run_hud_demo_agent.py
-HUD_API_KEY=... PYTHONPATH=src python scripts/run_optimizer.py --op elementwise_add_relu --max-rounds 1 --stream-hud
+HUD_API_KEY=... PYTHONPATH=src python scripts/run_optimizer.py --op elementwise_add_relu --max-rounds 1 --stream-hud --hud-job-name protean-smoke
+HUD_API_KEY=... PYTHONPATH=src python scripts/run_optimizer.py --op elementwise_add_relu --max-rounds 1 --stream-hud --hud-group 3
 ```
 
 ## Design Boundaries

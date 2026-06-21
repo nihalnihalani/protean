@@ -12,13 +12,13 @@ Protean turns GPU-kernel optimization into a HUD task where every submitted kern
 
 | Area | Status | Evidence |
 |---|---|---|
-| GPU verifier | Working on Spark GB10 | `33 passed`, smoke verifier correct on both ops |
-| HUD dashboard | Working with speed-sensitive reward | [HUD passing job](https://hud.ai/jobs/5a3ddc3f24a748d9abda38866bccb503) |
+| GPU verifier | Working on Spark GB10 | `49 passed, 1 skipped`, smoke verifier correct on both ops |
+| HUD dashboard | Working as eval control plane | Stable tasks, one-job optimizer streaming, grouped rollouts |
 | Ops | `elementwise_add_relu`, `rmsnorm` | Both have PyTorch reference + hand Triton kernel |
 | Held-out split | Working | Train: `1024, 2048, 4096`; held-out: `1536, 3072, 5632` |
 | Anti-hack checks | Working | PyTorch passthrough, no-launch, bad-shape score zero |
 | Optimizer loop | Working | Saves candidates, logs trials, accepts only strict improvements |
-| HUD trial streaming | Working | Optional `--stream-hud` creates a HUD job for every optimizer trial |
+| HUD trial streaming | Working | Optional `--stream-hud` streams every trial into one HUD job/session |
 | Fireworks backend | Wired | JSON mode, low reasoning, crash-safe logging, HUD streaming ready |
 | Learned controller | Implemented as v1 1M policy head | Trains from verifier traces |
 
@@ -103,14 +103,32 @@ Run the optimizer loop:
 python scripts/run_optimizer.py --all-ops --max-rounds 1
 ```
 
-Stream every optimizer trial to HUD:
+Stream every optimizer trial to one HUD job:
 
 ```bash
 export HUD_API_KEY=...
-python scripts/run_optimizer.py --edit-policy local --op elementwise_add_relu --max-rounds 1 --stream-hud
+python scripts/run_optimizer.py \
+  --edit-policy local \
+  --op elementwise_add_relu \
+  --max-rounds 1 \
+  --stream-hud \
+  --hud-job-name protean-smoke
 ```
 
-This creates one HUD eval job per trial candidate. The local `trials.jsonl` stays the continuous audit log, and each trial row records either `hud_stream.job_url` or `hud_stream_error`.
+This opens one HUD job for the optimizer run, then records each candidate as HUD traces under that job. The local `trials.jsonl` stays the continuous audit log, and each trial row records either `hud_stream.job_url` or `hud_stream_error`.
+
+Measure reward spread for trainability:
+
+```bash
+export HUD_API_KEY=...
+python scripts/run_optimizer.py \
+  --edit-policy local \
+  --op elementwise_add_relu \
+  --max-rounds 1 \
+  --stream-hud \
+  --hud-job-name protean-group-smoke \
+  --hud-group 3
+```
 
 Run the HUD passing demo:
 
@@ -126,7 +144,20 @@ Use Fireworks for model-generated edits:
 ```bash
 export FIREWORKS_API_KEY=...
 export HUD_API_KEY=...
-python scripts/run_optimizer.py --edit-policy fireworks --all-ops --max-rounds 5 --stream-hud
+python scripts/run_optimizer.py \
+  --edit-policy fireworks \
+  --all-ops \
+  --max-rounds 50 \
+  --stream-hud \
+  --hud-job-name protean-overnight
+```
+
+Sync Protean's taskset to HUD:
+
+```bash
+hud deploy . --no-env
+hud sync tasks protean-kernel-optimizer src/protean/env.py --yes
+hud eval protean-kernel-optimizer claude --full --group 3 --max-concurrent 4
 ```
 
 ## Public HUD Tasks
@@ -138,12 +169,29 @@ python scripts/run_optimizer.py --edit-policy fireworks --all-ops --max-rounds 5
 | `rmsnorm_train` | `rmsnorm` | train | 1024 |
 | `rmsnorm_held_out` | `rmsnorm` | held-out | 1536 |
 
+## HUD Control Plane
+
+Protean uses HUD as the public eval/training control plane:
+
+| HUD surface | Protean usage |
+|---|---|
+| Tasksets | Four stable task rows: two ops times train/held-out |
+| Jobs | One optimizer run opens one HUD job/session |
+| Traces | Every candidate records model response, saved file, AST check, compile status, correctness, timing, reward, and accept/reject |
+| Subscores | HUD-normalized `0..1` components for reward, correctness, speedup, held-out, anti-hack, and compile success |
+| Groups | `--hud-group N` repeats each HUD task per candidate to inspect reward spread |
+| Training | HUD traces can feed GRPO once grouped rewards show useful variance |
+
+HUD-facing reward is normalized to `0..1`. The raw Protean reward remains in `info.protean_reward_raw` and in local `trials.jsonl`.
+
 ## Verified Artifacts
 
 | Artifact | Purpose |
 |---|---|
+| [HUD environment](https://hud.ai/environments/9907b272-ef58-4f57-9cd3-5dbcb37dd51e) | Deployed Protean HUD environment, image version 5 |
+| [HUD taskset](https://hud.ai/tasksets/6d2feb10-b23c-4928-a1f9-e8b53db364d7) | Synced `protean-kernel-optimizer` taskset with all four tasks |
+| [HUD control-plane smoke job](https://hud.ai/jobs/4e03f95d8eb440989758d9b6d37dc183) | One Spark optimizer run streamed five trials into one grouped HUD job |
 | [HUD passing demo job](https://hud.ai/jobs/5a3ddc3f24a748d9abda38866bccb503) | Shows speed-sensitive non-zero reward in HUD dashboard |
-| [HUD optimizer-trial stream job](https://hud.ai/jobs/3203cf74fb314cb29b32389e1a22531d) | One candidate from a Spark optimizer run streamed to HUD |
 | [HUD generic-agent integration job](https://hud.ai/jobs/22314aa9438c4d41bb98edeadea29913) | Shows standard HUD eval path with a weak one-step agent |
 | `demo/hud-demo-agent-results.json` | Local copy of passing HUD demo results |
 | `demo/protean-demo-results.json` | Local benchmark artifact |
@@ -178,7 +226,7 @@ Hard failures get reward `0.0`. Correct kernels get a small correctness floor pl
 | `src/protean/grader.py` | Direct verifier entrypoint and HUD result adapter |
 | `src/protean/bench_core.py` | CUDA correctness and timing harness |
 | `src/protean/env.py` | HUD wrapper exposing four task ids |
-| `src/protean/hud_stream.py` | Per-trial HUD eval job streaming for optimizer candidates |
+| `src/protean/hud_stream.py` | One-job HUD streaming for optimizer candidates, trace steps, grouped rollouts |
 | `src/protean/optimizer.py` | Iterative candidate generation, evaluation, accept/reject, logging |
 | `src/protean/kernels.py` | Known-good kernels and red-team examples |
 | `src/protean/model/` | Policy, RL layer, Fireworks backend, 1M learned head |
@@ -193,6 +241,6 @@ Protean does not yet claim that a trained model beats every hand-optimized kerne
 ## Next
 
 1. Run Fireworks overnight with `FIREWORKS_API_KEY` and `HUD_API_KEY` on Spark.
-2. Stream every candidate to HUD with `--stream-hud` and keep `hud_stream.job_url` in `trials.jsonl`.
+2. Stream every candidate to one HUD job with `--stream-hud --hud-job-name protean-overnight`.
 3. Train the 1M policy head from those traces.
 4. Compare deterministic, Fireworks, and learned-policy edit ordering on held-out shapes.

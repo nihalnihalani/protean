@@ -83,8 +83,18 @@ def grade_source(
 
 
 def to_eval_result(grade_dict: dict):
-    reward = grade_dict["reward"]
-    hud_subscore = max(0.0, min(float(reward), 1.0))
+    raw_reward = float(grade_dict["reward"])
+    hud_reward = max(0.0, min(raw_reward / 2.0, 1.0))
+    correct = bool(grade_dict.get("correct", False)) and not grade_dict.get("caps")
+    speedup_score = max(0.0, min(float(grade_dict.get("speedup_score", 0.0)), 1.0))
+    held_out = 1.0 if grade_dict.get("split") == "held_out" and correct else 0.0
+    anti_hack = 1.0 if not grade_dict.get("caps") else 0.0
+    compile_success = 1.0 if "cuda_unavailable" not in grade_dict.get("caps", []) else 0.0
+    info = {
+        **grade_dict,
+        "protean_reward_raw": raw_reward,
+        "hud_reward_normalized": hud_reward,
+    }
     try:
         from hud.graders import EvaluationResult, SubScore
     except Exception:  # pragma: no cover - local tests should not require HUD.
@@ -103,7 +113,14 @@ def to_eval_result(grade_dict: dict):
             info: dict
 
     return EvaluationResult(
-        reward=reward,
-        subscores=[SubScore(name="reward", value=hud_subscore, weight=1.0)],
-        info=grade_dict,
+        reward=hud_reward,
+        subscores=[
+            SubScore(name="hud_reward", value=hud_reward, weight=1.0),
+            SubScore(name="correctness", value=1.0 if correct else 0.0, weight=0.0),
+            SubScore(name="speedup", value=speedup_score, weight=0.0),
+            SubScore(name="held_out", value=held_out, weight=0.0),
+            SubScore(name="anti_hack", value=anti_hack, weight=0.0),
+            SubScore(name="compile_success", value=compile_success, weight=0.0),
+        ],
+        info=info,
     )

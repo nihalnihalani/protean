@@ -61,6 +61,7 @@ def test_optimizer_streams_each_trial_to_hud_when_enabled(tmp_path, monkeypatch)
     import protean.optimizer as optimizer
 
     calls = {"eval": 0, "stream": []}
+    session = types.SimpleNamespace(job_url="https://hud.ai/jobs/session-1", name="session-1")
 
     def fake_evaluate_kernel(source, *, op, reps, warmup):
         calls["eval"] += 1
@@ -71,28 +72,35 @@ def test_optimizer_streams_each_trial_to_hud_when_enabled(tmp_path, monkeypatch)
     def fake_stream_candidate_to_hud(**kwargs):
         calls["stream"].append(kwargs)
         return {
-            "job_id": f"job-{kwargs['trial']}",
-            "job_url": f"https://hud.ai/jobs/job-{kwargs['trial']}",
+            "job_id": "session-1",
+            "job_url": "https://hud.ai/jobs/session-1",
             "mean_reward": 0.5,
             "rows": [{"slug": f"{kwargs['op']}_train", "reward": 0.5}],
         }
 
+    def fake_start_hud_stream_session(**kwargs):
+        return session
+
     fake_hud_stream = types.ModuleType("protean.hud_stream")
     fake_hud_stream.stream_candidate_to_hud = fake_stream_candidate_to_hud
+    fake_hud_stream.start_hud_stream_session = fake_start_hud_stream_session
 
     monkeypatch.setattr(optimizer, "evaluate_kernel", fake_evaluate_kernel)
     monkeypatch.setitem(sys.modules, "protean.hud_stream", fake_hud_stream)
 
-    result = run_optimization(out_dir=tmp_path, max_rounds=1, stream_hud=True)
+    result = run_optimization(out_dir=tmp_path, max_rounds=1, stream_hud=True, hud_job_name="session-1")
 
     rows = [(json.loads(line)) for line in (tmp_path / "trials.jsonl").read_text().splitlines()]
     trials = [row for row in rows if row["event"] == "trial"]
     assert result["stream_hud"] is True
+    assert result["hud_job_url"] == "https://hud.ai/jobs/session-1"
     assert result["trials"] == 5
     assert len(calls["stream"]) == 5
+    assert all(call["session"] is session for call in calls["stream"])
+    assert calls["stream"][0]["summary"]["mean_reward"] == 0.9
     assert trials[0]["trial"] == 1
     assert trials[0]["op"] == "elementwise_add_relu"
-    assert trials[0]["hud_stream"]["job_url"] == "https://hud.ai/jobs/job-1"
+    assert trials[0]["hud_stream"]["job_url"] == "https://hud.ai/jobs/session-1"
     assert trials[0]["hud_stream_error"] is None
 
 
@@ -100,6 +108,7 @@ def test_optimizer_logs_hud_stream_error_without_killing_trial(tmp_path, monkeyp
     import protean.optimizer as optimizer
 
     calls = {"eval": 0}
+    session = types.SimpleNamespace(job_url="https://hud.ai/jobs/session-1", name="session-1")
 
     def fake_evaluate_kernel(source, *, op, reps, warmup):
         calls["eval"] += 1
@@ -110,8 +119,12 @@ def test_optimizer_logs_hud_stream_error_without_killing_trial(tmp_path, monkeyp
     def fake_stream_candidate_to_hud(**kwargs):
         raise RuntimeError("hud unavailable")
 
+    def fake_start_hud_stream_session(**kwargs):
+        return session
+
     fake_hud_stream = types.ModuleType("protean.hud_stream")
     fake_hud_stream.stream_candidate_to_hud = fake_stream_candidate_to_hud
+    fake_hud_stream.start_hud_stream_session = fake_start_hud_stream_session
 
     monkeypatch.setattr(optimizer, "evaluate_kernel", fake_evaluate_kernel)
     monkeypatch.setitem(sys.modules, "protean.hud_stream", fake_hud_stream)

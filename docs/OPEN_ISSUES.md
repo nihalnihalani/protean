@@ -15,7 +15,7 @@ Needed:
 ```bash
 export FIREWORKS_API_KEY=...
 export HUD_API_KEY=...
-python scripts/run_optimizer.py --edit-policy fireworks --all-ops --max-rounds 20 --stream-hud --out-dir runs/protean-fireworks-overnight
+python scripts/run_optimizer.py --edit-policy fireworks --all-ops --max-rounds 20 --stream-hud --hud-job-name protean-fireworks-overnight --out-dir runs/protean-fireworks-overnight
 ```
 
 Acceptance:
@@ -23,6 +23,7 @@ Acceptance:
 - every candidate appears under `runs/protean-fireworks-overnight/candidates/`
 - every trial appears in `trials.jsonl`
 - every trial has either `hud_stream.job_url` or `hud_stream_error`
+- all streamed trials share one HUD job URL for the overnight session
 - model tokens are logged
 - compile/runtime failures are rejected with `eval_error`
 
@@ -70,14 +71,21 @@ The 1M learned controller exists, but the README should not claim it improves ke
 
 ## Engineering Gaps
 
-### 6. HUD subscore warning
+### 6. HUD grouped platform eval needs a clean completion run
 
-HUD `SubScore.value` must be `0..1`, while Protean reward can exceed `1.0`. The adapter caps the subscore at `1.0` and preserves Protean reward as the main HUD reward. This works, but HUD may emit a warning because weighted subscores do not sum to the main reward.
+HUD deployment and taskset sync are complete:
 
-Decision:
+- environment: https://hud.ai/environments/9907b272-ef58-4f57-9cd3-5dbcb37dd51e
+- taskset: https://hud.ai/tasksets/6d2feb10-b23c-4928-a1f9-e8b53db364d7
+- task ids: `elementwise_add_relu_train`, `elementwise_add_relu_held_out`, `rmsnorm_train`, `rmsnorm_held_out`
 
-- acceptable for the demo
-- later add separate normalized HUD subscore names, e.g. `correctness`, `speedup_floor`, `metadata_only_reward`
+The remaining platform check is a grouped remote eval that exits cleanly from the CLI:
+
+```bash
+hud eval protean-kernel-optimizer claude --full --group 3 --max-concurrent 4
+```
+
+The first attempt loaded all four tasks and started 12 grouped runs, but the CLI produced no progress output for several minutes and was interrupted to avoid leaving an unmanaged long-running process.
 
 ### 7. Static anti-hack checks are intentionally minimal
 

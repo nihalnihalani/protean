@@ -64,6 +64,9 @@ def run_optimization(
     stream_hud: bool = False,
     hud_env_source: str | Path = "src/protean/env.py",
     hud_timeout: float = 180.0,
+    hud_job_name: str | None = None,
+    hud_group: int = 1,
+    hud_session=None,
 ) -> dict:
     out = Path(out_dir)
     out.mkdir(parents=True, exist_ok=True)
@@ -85,6 +88,13 @@ def run_optimization(
     seed_path.write_text(seed_source)
     trial_count = 0
     accepted_count = 0
+    if stream_hud and hud_session is None:
+        from protean.hud_stream import start_hud_stream_session
+
+        hud_session = start_hud_stream_session(
+            name=hud_job_name or f"protean-{edit_policy}-{op}-{int(started)}",
+            group=hud_group,
+        )
 
     with log_path.open("a") as log:
         log.write(
@@ -164,8 +174,17 @@ def run_optimization(
                             trial=trial_count,
                             edit=edit.name,
                             accepted=accepted,
+                            policy=edit.policy,
+                            reason=edit.reason,
+                            tokens=edit.tokens,
+                            model_cost_usd=edit.model_cost_usd,
+                            source_path=str(candidate_path),
+                            summary=candidate_summary,
+                            eval_error=eval_error,
                             env_source=hud_env_source,
                             timeout=hud_timeout,
+                            session=hud_session,
+                            group=hud_group,
                         )
                     except Exception as exc:  # noqa: BLE001 - streaming should not kill optimization.
                         hud_stream_error = {
@@ -216,6 +235,9 @@ def run_optimization(
         "edit_policy": edit_policy,
         "op": op,
         "stream_hud": stream_hud,
+        "hud_job_url": hud_session.job_url if hud_session is not None else None,
+        "hud_job_name": hud_session.name if hud_session is not None else None,
+        "hud_group": hud_group if stream_hud else None,
     }
     summary_path.write_text(json.dumps(final, indent=2, sort_keys=True) + "\n")
     return final

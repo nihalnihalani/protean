@@ -17,7 +17,7 @@ python scripts/check_redteam.py
 Expected current local result:
 
 ```text
-47 passed, 1 skipped
+49 passed, 1 skipped
 ```
 
 ## Spark GPU Checks
@@ -67,10 +67,14 @@ rmsnorm_train:                 reward=1.211 correct=True speedup=6.40x caps=[]
 - [x] Trial records are written to `trials.jsonl`.
 - [x] Compile/runtime failures are logged as rejected trials.
 - [x] Optional HUD streaming records `hud_stream.job_url` or `hud_stream_error` per trial.
+- [x] One optimizer run streams into one HUD job/session.
+- [x] HUD trace steps include model response, candidate save, AST, compile, correctness, timing, reward, and accept/reject.
+- [x] HUD reward/subscores are normalized to `0..1`; raw Protean reward is in metadata.
 
 ```bash
 python scripts/run_optimizer.py --all-ops --max-rounds 1 --out-dir runs/protean-hud-preflight
-HUD_API_KEY=... python scripts/run_optimizer.py --op elementwise_add_relu --max-rounds 1 --stream-hud --out-dir runs/protean-hud-stream-smoke
+HUD_API_KEY=... python scripts/run_optimizer.py --op elementwise_add_relu --max-rounds 1 --stream-hud --hud-job-name protean-hud-stream-smoke --out-dir runs/protean-hud-stream-smoke
+HUD_API_KEY=... python scripts/run_optimizer.py --op elementwise_add_relu --max-rounds 1 --stream-hud --hud-group 3 --out-dir runs/protean-hud-group-smoke
 ```
 
 Verified Spark output:
@@ -80,14 +84,16 @@ elementwise_add_relu  accepted=1/5
 rmsnorm               accepted=0/5
 ```
 
-Verified HUD stream smoke:
+Verified HUD control-plane smoke on Spark:
 
 ```text
-trial 1 -> https://hud.ai/jobs/3203cf74fb314cb29b32389e1a22531d
-trial 2 -> https://hud.ai/jobs/f58885c88d77479ab182eb9dd123651f
-trial 3 -> https://hud.ai/jobs/ae685277145d472c9030386957be8ce6
-trial 4 -> https://hud.ai/jobs/42e800d337b545ac90021be2b08c3cfd
-trial 5 -> https://hud.ai/jobs/41b4bc655ac34c2487f435c19c389054
+job_url: https://hud.ai/jobs/4e03f95d8eb440989758d9b6d37dc183
+trials: 5
+group: 2
+rows_per_trial: 4
+trace_ids: 20
+reward_std: 0.037614
+accepted: 1/5
 ```
 
 ## Fireworks Overnight Run
@@ -97,7 +103,7 @@ Requires `FIREWORKS_API_KEY`. Add `HUD_API_KEY` and `--stream-hud` when every tr
 ```bash
 export FIREWORKS_API_KEY=...
 export HUD_API_KEY=...
-python scripts/run_optimizer.py --edit-policy fireworks --all-ops --max-rounds 20 --stream-hud --out-dir runs/protean-fireworks-overnight
+python scripts/run_optimizer.py --edit-policy fireworks --all-ops --max-rounds 20 --stream-hud --hud-job-name protean-fireworks-overnight --out-dir runs/protean-fireworks-overnight
 ```
 
 Acceptance criteria:
@@ -106,4 +112,32 @@ Acceptance criteria:
 - [ ] Every trial is logged.
 - [ ] Compile/runtime errors appear as `eval_error` and rejected, not lost.
 - [ ] Every trial has either `hud_stream.job_url` or `hud_stream_error`.
+- [x] All streamed trials share one HUD job URL for the optimizer session in local-policy smoke.
+- [ ] All streamed trials share one HUD job URL for the overnight Fireworks session.
 - [ ] Summary shows accepted count, best score, tokens, and model cost metadata.
+
+## HUD Platform Taskset
+
+Use this when the goal is a reusable HUD benchmark, not only local Spark streaming:
+
+```bash
+hud deploy . --no-env
+hud sync tasks protean-kernel-optimizer src/protean/env.py --yes
+hud eval protean-kernel-optimizer claude --full --group 3 --max-concurrent 4
+```
+
+Acceptance criteria:
+
+- [x] HUD environment deploy succeeds.
+- [x] Taskset appears on the HUD dashboard as `protean-kernel-optimizer`.
+- [x] All four task rows are present.
+- [ ] `--group 3` remote eval completes without operator interruption.
+
+Verified HUD platform artifacts:
+
+```text
+environment: https://hud.ai/environments/9907b272-ef58-4f57-9cd3-5dbcb37dd51e
+taskset:     https://hud.ai/tasksets/6d2feb10-b23c-4928-a1f9-e8b53db364d7
+deploy:      image version 5, v6 control channel introspection OK
+sync:        4 created, 0 updated
+```

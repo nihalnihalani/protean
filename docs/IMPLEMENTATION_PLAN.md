@@ -11,7 +11,8 @@ For the hackathon, the proof is smaller:
 1. Show a trustworthy verifier.
 2. Show non-zero HUD reward on real GPU kernels.
 3. Show an optimizer loop that saves and logs every candidate.
-4. Show the path for Fireworks/model-backed edits.
+4. Use HUD as the eval/training control plane for optimizer runs.
+5. Show the path for Fireworks/model-backed edits.
 
 ## Layer 1: Verifier
 
@@ -63,7 +64,7 @@ Status: implemented and verified.
 - Accepts only strict improvements.
 - Logs every trial to JSONL.
 - Converts verifier crashes into rejected trial records.
-- Optionally streams every trial candidate to HUD.
+- Optionally streams every trial candidate into one HUD job/session.
 
 Acceptance:
 
@@ -74,10 +75,36 @@ python scripts/run_optimizer.py --all-ops --max-rounds 1
 HUD streaming acceptance:
 
 ```bash
-HUD_API_KEY=... python scripts/run_optimizer.py --op elementwise_add_relu --max-rounds 1 --stream-hud
+HUD_API_KEY=... python scripts/run_optimizer.py --op elementwise_add_relu --max-rounds 1 --stream-hud --hud-job-name protean-smoke
 ```
 
-This creates one HUD eval job per candidate. Each trial row records either `hud_stream.job_url` or `hud_stream_error`, so local/Spark optimizer runs and HUD dashboard artifacts stay linked without making HUD failures kill the optimizer.
+This opens one HUD job, appends each trial candidate under that job, and records either `hud_stream.job_url` or `hud_stream_error` per trial. HUD failures do not kill the optimizer.
+
+## Layer 3.5: HUD Control Plane
+
+Status: implemented.
+
+- Stable task rows expose the Protean benchmark to HUD.
+- One optimizer run maps to one HUD job.
+- Each candidate creates HUD traces for train and held-out tasks.
+- Trace steps show model response, saved candidate, AST check, compile status, correctness, timing, reward, and accept/reject.
+- HUD rewards/subscores are normalized to `0..1`.
+- Raw Protean reward remains in `info.protean_reward_raw` and `trials.jsonl`.
+- `--hud-group N` repeats each task to measure reward spread for trainability.
+
+Commands:
+
+```bash
+hud deploy . --no-env
+hud sync tasks protean-kernel-optimizer src/protean/env.py --yes
+hud eval protean-kernel-optimizer claude --full --group 3 --max-concurrent 4
+python scripts/run_optimizer.py --op elementwise_add_relu --max-rounds 1 --stream-hud --hud-group 3
+```
+
+Verified platform artifacts:
+
+- environment: https://hud.ai/environments/9907b272-ef58-4f57-9cd3-5dbcb37dd51e
+- taskset: https://hud.ai/tasksets/6d2feb10-b23c-4928-a1f9-e8b53db364d7
 
 ## Layer 4: Model-Backed Edits
 
@@ -97,7 +124,7 @@ Next run:
 ```bash
 export FIREWORKS_API_KEY=...
 export HUD_API_KEY=...
-python scripts/run_optimizer.py --edit-policy fireworks --all-ops --max-rounds 20 --stream-hud --out-dir runs/protean-fireworks-overnight
+python scripts/run_optimizer.py --edit-policy fireworks --all-ops --max-rounds 20 --stream-hud --hud-job-name protean-fireworks-overnight --out-dir runs/protean-fireworks-overnight
 ```
 
 ## Layer 5: Learned Policy Head
