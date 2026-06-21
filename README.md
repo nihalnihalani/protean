@@ -18,8 +18,6 @@
 [![Fireworks AI](https://img.shields.io/badge/Fireworks%20AI-Kernel%20Edits-5019C9?style=for-the-badge)](https://fireworks.ai)
 [![NVIDIA](https://img.shields.io/badge/NVIDIA-B200%20%2F%20GB10-76B900?style=for-the-badge&logo=nvidia&logoColor=white)](https://www.nvidia.com)
 [![Modal](https://img.shields.io/badge/Modal-GPU%20Runner-000000?style=for-the-badge&logo=modal&logoColor=white)](https://modal.com)
-[![Vercel](https://img.shields.io/badge/Vercel-Dashboard%20%2B%20Blob-000000?style=for-the-badge&logo=vercel&logoColor=white)](https://vercel.com)
-[![Neon](https://img.shields.io/badge/Neon-Postgres-00E599?style=for-the-badge&logo=neon&logoColor=white)](https://neon.tech)
 
 <br/>
 
@@ -41,6 +39,8 @@
 
 ![Triton](https://img.shields.io/badge/Triton-090909?style=for-the-badge)
 ![CUDA](https://img.shields.io/badge/CUDA%2012.4-76B900?style=for-the-badge&logo=nvidia&logoColor=white)
+![Vercel](https://img.shields.io/badge/Vercel-000000?style=for-the-badge&logo=vercel&logoColor=white)
+![Neon Postgres](https://img.shields.io/badge/Neon%20Postgres-00E599?style=for-the-badge&logo=neon&logoColor=white)
 
 </div>
 
