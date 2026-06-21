@@ -4,9 +4,27 @@ An overnight GPU-kernel optimizer with a verifier you can trust.
 
 Protean starts from a working Triton kernel, generates edits, grades every candidate on correctness and speed, keeps only improvements, and writes an audit trail of every attempt. The hackathon demo is intentionally lean: prove the verifier and loop work on real GPU hardware, then use that loop for model-backed kernel improvement.
 
+**Live dashboard:** <https://protean-khaki.vercel.app>  
+**Demo video:** <https://youtu.be/qDc0QZqu7q4>
+
+![NVIDIA B200 live utilization during optimizer trials](assets/b200_gpu_utilization.png)
+
+The screenshot above is the Modal B200 run pattern Protean is built around: short bursts to 100% GPU utilization while candidate kernels compile, launch, and benchmark, with the verifier logging correctness, latency, speedup, reward, and accept/reject after every trial.
+
 ## The Demo In One Sentence
 
-Protean turns GPU-kernel optimization into a HUD task where every submitted kernel is checked for correctness, speedup, held-out shape behavior, and obvious hacks.
+Protean turns GPU-kernel optimization into a live eval loop: a coding agent edits kernels, the verifier rejects incorrect or hacky submissions, correct faster kernels score higher, and the dashboard shows the improvement curve in real time.
+
+## What The Demo Shows
+
+| Surface | URL | What judges should look for |
+|---|---|---|
+| Production dashboard | <https://protean-khaki.vercel.app> | Speedup curve rising, latency falling, accepted/rejected candidate history, GPU samples, Blob-backed source artifact |
+| Latest showcase run | <https://protean-khaki.vercel.app/runs/live-showcase-20260621-124855> | 24 trial rows, 17 accepted, 7 rejected, best speedup `4.62x`, best latency `0.031 ms` |
+| HUD control plane | <https://hud.ai/tasksets/3f2d2423-72d4-4541-bb18-b78e31151676> | Stable taskset rows for verifier-backed kernel tasks |
+| Demo video | <https://youtu.be/qDc0QZqu7q4> | End-to-end visual walkthrough |
+
+The important behavior is not a single hand-picked number. It is the loop: incorrect kernels get `0`, correct-but-slower kernels are logged but not accepted, and faster correct kernels push the best-so-far curve upward.
 
 ## What Is Working
 
@@ -21,6 +39,7 @@ Protean turns GPU-kernel optimization into a HUD task where every submitted kern
 | HUD trial streaming | Working | Optional `--stream-hud` streams every trial into one HUD job/session |
 | Fireworks backend | Wired | JSON mode, low reasoning, crash-safe logging, HUD streaming ready |
 | Learned controller | Implemented as v1 1M policy head | Trains from verifier traces |
+| Vercel dashboard | Working in production | Neon/Postgres, Vercel Blob, authenticated ingest, public read dashboard |
 
 ## Money Figure
 
@@ -71,6 +90,22 @@ sequenceDiagram
     Protean-->>HUD: reward, speedup, caps, metadata
     HUD-->>HUD: dashboard job + leaderboard trace
 ```
+
+## Figure 3: Production Data Path
+
+```mermaid
+flowchart LR
+    A["Modal/Spark optimizer"] --> B["Authenticated ingest API"]
+    B --> C["Neon/Postgres"]
+    B --> D["Vercel Blob artifacts"]
+    C --> E["Public read API"]
+    D --> E
+    E --> F["Protean dashboard"]
+    A --> G["HUD job/traces"]
+    G --> F
+```
+
+The dashboard is not static marketing copy. It reads the production database and Blob artifacts, so every run page can show trial rows, accepted/rejected history, GPU utilization samples, candidate source links, and HUD proof links.
 
 ## Quickstart
 
@@ -248,6 +283,36 @@ Protean uses HUD as the public eval/training control plane:
 
 HUD-facing reward is normalized to `0..1`. The raw Protean reward remains in `info.protean_reward_raw` and in local `trials.jsonl`.
 
+## Vercel Dashboard
+
+Protean also includes a public-read Next.js dashboard in `apps/web` for run
+history, live trial curves, GPU utilization, candidate artifacts, and HUD links.
+Deploy it on Vercel with `apps/web` as the project root directory. See
+`docs/VERCEL_DASHBOARD.md` for environment variables and the Spark/Modal ingest
+command.
+
+Production status:
+
+| Component | Status |
+|---|---|
+| Vercel deployment | Ready at <https://protean-khaki.vercel.app> |
+| Neon/Postgres | Connected via `DATABASE_URL` |
+| Vercel Blob | Connected via `BLOB_READ_WRITE_TOKEN` |
+| Ingest auth | `PROTEAN_INGEST_TOKEN`; unauthenticated writes return `401` |
+| Public reads | `/`, `/runs`, `/api/runs`, and `/api/runs/[id]` return database-backed data |
+
+Verified showcase run:
+
+| Metric | Value |
+|---|---:|
+| Run id | `live-showcase-20260621-124855` |
+| Trials | 24 |
+| GPU samples | 24 |
+| Blob artifacts | 1 |
+| Accepted / rejected | 17 / 7 |
+| Best speedup | 4.62x |
+| Best latency | 0.031 ms |
+
 ## Verified Artifacts
 
 | Artifact | Purpose |
@@ -294,7 +359,7 @@ Hard failures get reward `0.0`. Correct kernels get a small correctness floor pl
 |---|---|
 | `src/protean/grader.py` | Direct verifier entrypoint and HUD result adapter |
 | `src/protean/bench_core.py` | CUDA correctness and timing harness |
-| `src/protean/env.py` | HUD wrapper exposing six task ids |
+| `src/protean/env.py` | HUD wrapper exposing the public task grid |
 | `src/protean/hud_stream.py` | One-job HUD streaming for optimizer candidates, trace steps, grouped rollouts |
 | `src/protean/optimizer.py` | Iterative candidate generation, evaluation, accept/reject, logging |
 | `src/protean/kernels.py` | Known-good kernels and red-team examples |
@@ -305,6 +370,49 @@ Hard failures get reward `0.0`. Correct kernels get a small correctness floor pl
 | `scripts/plot_curve.py` | Plots real `outputs/train_history.json` data, no mock curve |
 | `docs/FIGURES.md` | Reusable Mermaid diagrams and result tables for the demo |
 | `docs/` | Architecture, technical spec, build checklist, open issues |
+
+## Kernel Tasks In Plain English
+
+Protean is not tied to one model family. The verifier/task layer is deliberately shaped around kernels companies actually optimize in production:
+
+| Task | Reads as | Plain-English description |
+|---|---|---|
+| `elementwise_add_relu` | fused elementwise op | Adds two tensors and applies ReLU in one pass. A small but useful verifier smoke test. |
+| `rmsnorm` | normalization | Computes RMS normalization used in many transformer blocks. |
+| `softmax_rows` | row-wise softmax | Converts logits to probabilities per row; common in attention and routing. |
+| `matmul_tile` | tiled matrix multiply | The core dense linear algebra primitive behind linear layers. |
+| `attention_softmax` | attention normalization piece | The softmax-like part of attention where stability and memory traffic matter. |
+| `layernorm` | normalization | Centers/scales activations across a feature dimension. |
+| `fused_mlp` | fused feed-forward block | Fuses pieces of an MLP path to reduce memory round-trips. |
+| `quantize_dequant` | quantization round trip | Packs/unpacks values for lower-precision inference or storage. |
+| `moe_routing` | mixture-of-experts routing | Picks experts/tokens efficiently without breaking correctness. |
+| `embedding_lookup` | table lookup | Fetches rows from embedding tables with coalesced memory access. |
+| `sum_reduction` | reduction | Sums many values quickly and correctly. |
+| `prefix_scan` | scan | Computes cumulative values where ordering matters. |
+
+### Tensor Glossary
+
+| Symbol | What it usually means in Protean tasks |
+|---|---|
+| `x`, `a`, `b` | Input tensors |
+| `y`, `out` | Output tensor |
+| `m`, `n`, `k` | Matrix or vector dimensions |
+| `stride_*` | How far to move in memory for the next logical element |
+| `BLOCK`, `BLOCK_M`, `BLOCK_N`, `BLOCK_K` | Compile-time tile sizes used by Triton kernels |
+| `pid` | Triton program id; selects which tile a program instance owns |
+| `mask` | Bounds check for tiles that cross tensor edges |
+
+### Reward Rules
+
+The reward is intentionally simple:
+
+1. Incorrect output: reward `0`.
+2. Shape/dtype mismatch: reward `0`.
+3. Obvious hacks such as PyTorch passthrough or no Triton launch: reward `0` or capped.
+4. Correct but slower kernels are logged, but they do not become the new best.
+5. Correct faster kernels get higher reward and can exceed `1.0` in Protean's raw score.
+
+That makes the live chart honest: rising speedup means the verifier accepted a faster correct kernel, not just that the agent found a way to game the metric.
 
 ## What This Is Not Claiming Yet
 

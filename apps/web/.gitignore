@@ -1,0 +1,8 @@
+.next/
+node_modules/
+.vercel/
+*.log
+*.tsbuildinfo
+.vercel
+.env*
+.protean-ingest-token.local

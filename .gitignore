@@ -8,7 +8,7 @@ node_modules/
 # training/runtime artifacts
 *.ckpt
 checkpoints/
-runs/
+/runs/
 wandb/
 triton-cache/
 manifest_*.jsonl
