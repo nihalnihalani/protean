@@ -1,9 +1,13 @@
-"""HUD template wrapper around the direct Protean grader."""
+"""HUD public wrapper around the direct Protean verifier."""
 
 from __future__ import annotations
 
+import json
+from pathlib import Path
+from typing import Any
+
 from protean.grader import grade_source, to_eval_result
-from protean.splits import shapes_for_split
+from protean.splits import Split, shapes_for_split
 from protean.task_catalog import get_op
 
 try:
@@ -12,48 +16,129 @@ except Exception:  # pragma: no cover - local tests should not require HUD.
     Environment = None
 
 
-PROMPTS = {
-    "elementwise_add_relu": """Write a Triton implementation of solution(x, y) for fused relu(x + y).
-
-Requirements:
-- x and y are CUDA float16 tensors with identical 1D shape.
-- Return a tensor matching torch.relu(x + y).
-- Use a real @triton.jit kernel. PyTorch passthrough earns zero reward.
-- Do not hardcode the shape; held-out shapes are used for grading.
-""",
-    "rmsnorm": """Write a Triton implementation of solution(x, weight) for RMSNorm.
-
-Requirements:
-- x and weight are CUDA float16 tensors with identical 1D shape.
-- Return x * rsqrt(mean(x^2) + 1e-6) * weight (computed in float32 for stability).
-- The result must match the PyTorch reference within tolerance.
-- Use a real @triton.jit kernel. PyTorch passthrough earns zero reward.
-- Do not hardcode the shape; held-out shapes are used for grading.
-""",
-}
+HUD_TASKS = (
+    {"id": "elementwise_add_relu_train", "op": "elementwise_add_relu", "split": "train"},
+    {"id": "elementwise_add_relu_held_out", "op": "elementwise_add_relu", "split": "held_out"},
+    {"id": "rmsnorm_train", "op": "rmsnorm", "split": "train"},
+    {"id": "rmsnorm_held_out", "op": "rmsnorm", "split": "held_out"},
+)
 
 
-env = Environment(name="protean") if Environment is not None else None
+def _read_prompt(op: str) -> str:
+    spec = get_op(op)
+    path = Path(__file__).resolve().parents[2] / spec.prompt_path
+    return path.read_text()
+
+
+def hud_prompt(op: str, split: Split, shape: int | None = None) -> str:
+    shape = shape or shapes_for_split(split)[0]
+    return (
+        _read_prompt(op)
+        + "\n\n"
+        + "HUD grading metadata:\n"
+        + f"- op: {op}\n"
+        + f"- split: {split}\n"
+        + f"- shape: {shape}\n"
+        + "- reward info includes correctness, speedup, eager timing, kernel timing, and anti-hack caps.\n"
+    )
+
+
+def grade_hud_source(source: str, *, op: str, split: Split, shape: int | None = None) -> dict[str, Any]:
+    shape = shape or shapes_for_split(split)[0]
+    grade = grade_source(source or "", op=op, split=split, shape=shape)
+    return {
+        **grade,
+        "hud": {
+            "task_id": f"{op}_{split}",
+            "op": op,
+            "split": split,
+            "shape": shape,
+            "reward": grade["reward"],
+            "correct": grade["correct"],
+            "speedup": grade["speedup"],
+            "t_eager_ms": grade["t_eager_ms"],
+            "t_kernel_ms": grade["t_kernel_ms"],
+            "caps": grade["caps"],
+        },
+    }
+
+
+def task_metadata() -> list[dict[str, Any]]:
+    rows = []
+    for task in HUD_TASKS:
+        split = task["split"]
+        rows.append(
+            {
+                **task,
+                "shape": shapes_for_split(split)[0],
+                "prompt_path": get_op(task["op"]).prompt_path,
+            }
+        )
+    return rows
+
+
+def _make_env():
+    if Environment is None:
+        return None
+    try:
+        return Environment(id="protean")
+    except TypeError:  # pragma: no cover - compatibility with older local HUD builds.
+        return Environment(name="protean")
+
+
+env = _make_env()
+
+
+def _template(template_id: str):
+    try:
+        return env.template(id=template_id)
+    except TypeError:  # pragma: no cover - compatibility with older local HUD builds.
+        return env.template(name=template_id)
 
 
 if env is not None:
 
-    @env.template(id="elementwise_add_relu")
-    async def elementwise_add_relu(split: str = "train", shape: int | None = None):
+    @_template("elementwise_add_relu")
+    async def elementwise_add_relu(split: Split = "train", shape: int | None = None):
         get_op("elementwise_add_relu")
-        shape = shape or shapes_for_split(split)[0]
-        source = yield PROMPTS["elementwise_add_relu"]
-        yield to_eval_result(grade_source(source or "", op="elementwise_add_relu", split=split, shape=shape))
+        source = yield hud_prompt("elementwise_add_relu", split, shape)
+        yield to_eval_result(grade_hud_source(source or "", op="elementwise_add_relu", split=split, shape=shape))
 
-    @env.template(id="rmsnorm")
-    async def rmsnorm(split: str = "train", shape: int | None = None):
+    @_template("rmsnorm")
+    async def rmsnorm(split: Split = "train", shape: int | None = None):
         get_op("rmsnorm")
-        shape = shape or shapes_for_split(split)[0]
-        source = yield PROMPTS["rmsnorm"]
-        yield to_eval_result(grade_source(source or "", op="rmsnorm", split=split, shape=shape))
+        source = yield hud_prompt("rmsnorm", split, shape)
+        yield to_eval_result(grade_hud_source(source or "", op="rmsnorm", split=split, shape=shape))
 
-    # Expose runnable task instances for hud eval discovery
-    t_ew_train = elementwise_add_relu(split="train")
-    t_ew_held = elementwise_add_relu(split="held_out")
-    t_rms_train = rmsnorm(split="train")
-    t_rms_held = rmsnorm(split="held_out")
+    elementwise_add_relu_train = elementwise_add_relu(split="train")
+    elementwise_add_relu_held_out = elementwise_add_relu(split="held_out")
+    rmsnorm_train = rmsnorm(split="train")
+    rmsnorm_held_out = rmsnorm(split="held_out")
+else:
+    elementwise_add_relu = {"id": "elementwise_add_relu", "op": "elementwise_add_relu"}
+    rmsnorm = {"id": "rmsnorm", "op": "rmsnorm"}
+    for _task_def in HUD_TASKS:
+        globals()[_task_def["id"]] = dict(_task_def)
+
+
+# Backward-compatible alias used by older imports.
+kernel_opt = elementwise_add_relu_train
+
+
+def main() -> int:
+    print(
+        json.dumps(
+            {
+                "env_id": "protean",
+                "hud_available": env is not None,
+                "tasks": task_metadata(),
+            },
+            indent=2,
+            sort_keys=True,
+        )
+    )
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

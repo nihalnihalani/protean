@@ -96,6 +96,22 @@ export FIREWORKS_API_KEY=...
 python scripts/run_optimizer.py --max-rounds 1 --edit-policy fireworks
 ```
 
+Run the HUD task wrapper:
+
+```bash
+python -m protean.env
+python scripts/smoke_verifier.py --op elementwise_add_relu
+python scripts/smoke_verifier.py --op rmsnorm
+hud eval src/protean/env.py
+```
+
+HUD exposes four task ids:
+
+- `elementwise_add_relu_train`
+- `elementwise_add_relu_held_out`
+- `rmsnorm_train`
+- `rmsnorm_held_out`
+
 Outputs:
 
 - `demo/protean-demo-results.md`

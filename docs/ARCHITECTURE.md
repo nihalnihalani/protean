@@ -21,6 +21,11 @@ candidate source
   - Runs static checks first.
   - Calls the CUDA benchmark only when the candidate passes the cheap gates.
 
+- `src/protean/env.py`
+  - HUD public wrapper around the same direct grader.
+  - Exposes `elementwise_add_relu_train`, `elementwise_add_relu_held_out`, `rmsnorm_train`, and `rmsnorm_held_out`.
+  - HUD reward info includes op, split, shape, correctness, speedup, eager/kernel timing, and anti-hack caps.
+
 - `src/protean/anti_hack.py`
   - Rejects obvious PyTorch passthrough calls such as `torch.relu`.
   - Requires a real `@triton.jit` function.
@@ -98,6 +103,7 @@ python scripts/run_optimizer.py --max-rounds 1
 python scripts/train_tiny_policy.py --trace runs/protean-overnight/trials.jsonl
 python scripts/run_optimizer.py --max-rounds 1 --edit-policy learned --policy-path runs/protean-overnight/tiny_policy.json
 python scripts/run_optimizer.py --max-rounds 1 --edit-policy fireworks
+python -m protean.env
 ```
 
 Spark has already produced a real held-out delta for `elementwise_add_relu`.

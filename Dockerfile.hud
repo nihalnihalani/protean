@@ -11,7 +11,7 @@ RUN mkdir -p /triton-cache && chmod 777 /triton-cache
 
 WORKDIR /app
 COPY . /app
-RUN pip3 install --no-cache-dir -e .
+RUN pip3 install --no-cache-dir -e ".[gpu,hud]"
 
 RUN useradd -m -u 1000 agent
 
