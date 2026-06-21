@@ -1,221 +1,184 @@
 # Protean
 
-Small overnight GPU-kernel optimizer.
+An overnight GPU-kernel optimizer with a verifier you can trust.
 
-## Goal
+Protean starts from a working Triton kernel, generates edits, grades every candidate on correctness and speed, keeps only improvements, and writes an audit trail of every attempt. The hackathon demo is intentionally lean: prove the verifier and loop work on real GPU hardware, then use that loop for model-backed kernel improvement.
 
-Protean's goal is to build a coding agent that gets better at optimizing GPU kernels by trying edits, benchmarking them, learning from the results, and improving its next attempts.
+## The Demo In One Sentence
 
-You give Protean a GPU kernel. Protean keeps modifying it, tests every version for correctness and speed, rejects bad versions, keeps better versions, and logs every trial, speedup, failure, cost, and decision.
+Protean turns GPU-kernel optimization into a HUD task where every submitted kernel is checked for correctness, speedup, held-out shape behavior, and obvious hacks.
 
-For the hackathon, the goal is deliberately lean:
+## What Is Working
 
-1. A coding agent proposes kernel edits.
-2. A verifier grades correctness, speed, held-out shape behavior, and anti-hack checks.
-3. A 1M-parameter learned policy head trains from those verifier traces.
-4. The learned policy changes which edits the agent tries next.
+| Area | Status | Evidence |
+|---|---|---|
+| GPU verifier | Working on Spark GB10 | `33 passed`, smoke verifier correct on both ops |
+| HUD dashboard | Working with non-zero reward | [HUD passing job](https://hud.ai/jobs/813e572399c842c78d5a515f7644b4ae) |
+| Ops | `elementwise_add_relu`, `rmsnorm` | Both have PyTorch reference + hand Triton kernel |
+| Held-out split | Working | Train: `1024, 2048, 4096`; held-out: `1536, 3072, 5632` |
+| Anti-hack checks | Working | PyTorch passthrough, no-launch, bad-shape score zero |
+| Optimizer loop | Working | Saves candidates, logs trials, accepts only strict improvements |
+| Fireworks backend | Wired, needs key for new overnight run | JSON mode, low reasoning, crash-safe logging |
+| Learned controller | Implemented as v1 1M policy head | Trains from verifier traces |
 
-Long term, Protean should run overnight and wake you up with a faster, correct, well-tested kernel plus a full audit trail.
+## Money Figure
 
-## Promise
+Spark GB10, HUD demo agent, known-good Triton kernels, same HUD grader:
 
-> Start from a working GPU kernel, keep editing the current best version overnight, and wake up with the fastest correct kernel plus a full optimization trace.
+| Task | Split | Shape | Reward | Correct | Speedup |
+|---|---|---:|---:|---|---:|
+| `elementwise_add_relu` | train | 1024 | 1.3 | true | 1.55x |
+| `elementwise_add_relu` | held-out | 1536 | 1.3 | true | 2.08x |
+| `rmsnorm` | train | 1024 | 1.3 | true | 6.38x |
+| `rmsnorm` | held-out | 1536 | 1.3 | true | 6.87x |
 
-The verifier is the measurement core. The product is the improvement loop around it.
+The important part is not that these are final state-of-the-art kernels. The important part is that HUD is grading real Triton code with the same verifier Protean uses locally.
 
-## What Works Now
+## Figure 1: Verifier-First Loop
 
-- One op: `elementwise_add_relu`, equivalent to `torch.relu(x + y)`.
-- Second op: `rmsnorm`, equivalent to vector RMS normalization with learned weight.
-- Train shapes: `1024`, `2048`, `4096`.
-- Held-out shapes: `1536`, `3072`, `5632`.
-- Static anti-hack checks for PyTorch passthrough and no-`@triton.jit` submissions.
-- GPU grader that checks correctness, dtype, shape, `@triton.jit` usage, and CUDA timing.
-- Demo scripts that output JSON and Markdown benchmark artifacts.
-- Iterative optimizer that edits the current best kernel, evaluates each candidate, accepts improvements, and logs every trial.
-- One model-agent folder, `src/protean/model/`, for the edit policy, RL layer, harness policy, prompts, and model config.
-- HUD dashboard proof with a deterministic Protean demo agent that submits known-good kernels through the same HUD grader.
+```mermaid
+flowchart LR
+    A["Current best kernel"] --> B["Agent proposes edit"]
+    B --> C["Write candidate .py"]
+    C --> D["Static anti-hack checks"]
+    D --> E["CUDA correctness check"]
+    E --> F["CUDA event timing"]
+    F --> G["Reward JSON"]
+    G --> H{"Improves held-out score?"}
+    H -- yes --> I["Accept as new best"]
+    H -- no --> J["Reject, keep trace"]
+    I --> K["trials.jsonl + best_kernel.py"]
+    J --> K
+    K --> B
+```
 
-## Install
+## Figure 2: HUD Integration
 
-Core package and tests:
+```mermaid
+sequenceDiagram
+    participant HUD
+    participant Agent
+    participant Protean
+    participant GPU
+
+    HUD->>Agent: Prompt: write kernel for op/split/shape
+    Agent->>HUD: Candidate source
+    HUD->>Protean: grade_source(source, op, split, shape)
+    Protean->>Protean: AST anti-hack checks
+    Protean->>GPU: PyTorch eager vs Triton timing
+    GPU-->>Protean: correctness + timings
+    Protean-->>HUD: reward, speedup, caps, metadata
+    HUD-->>HUD: dashboard job + leaderboard trace
+```
+
+## Quickstart
+
+Install core test dependencies:
 
 ```bash
 python -m pip install -e ".[test]"
-```
-
-GPU verifier dependencies:
-
-```bash
-python -m pip install -e ".[gpu,test]"
-```
-
-HUD integration is optional:
-
-```bash
-python -m pip install -e ".[hud]"
-```
-
-## Run
-
-CPU-safe checks:
-
-```bash
 python -m pytest -q
+```
+
+Install GPU dependencies on a CUDA host:
+
+```bash
+python -m pip install -e ".[gpu,test,hud]"
 python scripts/check_redteam.py
+python scripts/smoke_verifier.py --op elementwise_add_relu
+python scripts/smoke_verifier.py --op rmsnorm
 ```
 
-GPU smoke test:
+Generate local demo artifacts:
 
 ```bash
-python scripts/smoke_verifier.py
-```
-
-Generate the demo benchmark:
-
-```bash
-python scripts/run_demo_benchmark.py
+python scripts/run_demo_benchmark.py --op elementwise_add_relu
+python scripts/run_demo_benchmark.py --op rmsnorm
 ```
 
 Run the optimizer loop:
 
 ```bash
-python scripts/run_optimizer.py --max-rounds 1
+python scripts/run_optimizer.py --all-ops --max-rounds 1
 ```
 
-Train the v1 learned controller from the optimizer trace:
-
-```bash
-python scripts/train_tiny_policy.py --trace runs/protean-overnight/trials.jsonl
-python scripts/run_optimizer.py --max-rounds 1 --edit-policy learned --policy-path runs/protean-overnight/tiny_policy.json
-```
-
-Ask Fireworks `gpt-oss-120b` for a model-generated kernel edit:
-
-```bash
-export FIREWORKS_API_KEY=...
-python scripts/run_optimizer.py --max-rounds 1 --edit-policy fireworks
-```
-
-Run the HUD task wrapper:
-
-```bash
-python -m protean.env
-python scripts/smoke_verifier.py --op elementwise_add_relu
-python scripts/smoke_verifier.py --op rmsnorm
-PYTHONPATH=src hud task list --source src/protean/env.py
-HUD_API_KEY=... PYTHONPATH=src python scripts/run_hud_demo_agent.py
-```
-
-HUD exposes four task ids:
-
-- `elementwise_add_relu_train`
-- `elementwise_add_relu_held_out`
-- `rmsnorm_train`
-- `rmsnorm_held_out`
-
-### HUD Dashboard Results
-
-Protean's demo agent (deterministic, submits known-good kernels) creates a real
-job on the HUD platform with non-zero rewards:
-
-- **Passing demo job**: https://hud.ai/jobs/8a8c3bfcf5904b9f8181ff13f3f309a7
-- **Integration job** (Fireworks openai_compatible): https://hud.ai/jobs/3af4548f0afe4f449b5245a2809ae0e0
-
-Per-task results (Spark GB10, hand-optimized Triton kernels):
-
-| Task                          | Reward | Correct | Speedup  | Caps |
-|-------------------------------|--------|---------|----------|------|
-| elementwise_add_relu_train    | 1.300  | True    | 1.55x    | []   |
-| elementwise_add_relu_held_out | 1.300  | True    | 2.08x    | []   |
-| rmsnorm_train                 | 1.300  | True    | 6.38x    | []   |
-| rmsnorm_held_out              | 1.300  | True    | 6.87x    | []   |
-
-Run the demo agent yourself:
+Run the HUD passing demo:
 
 ```bash
 export HUD_API_KEY=...
-python scripts/run_hud_demo_agent.py
+PYTHONPATH=src hud task list --source src/protean/env.py
+PYTHONPATH=src python scripts/run_hud_demo_agent.py
 ```
 
-### Fireworks gpt-oss-120b Integration
-
-Protean's optimizer supports Fireworks as a model-backed edit policy. The model
-receives the current best kernel and proposes improvements as JSON.
+Use Fireworks for model-generated edits:
 
 ```bash
 export FIREWORKS_API_KEY=...
 python scripts/run_optimizer.py --edit-policy fireworks --all-ops --max-rounds 5
 ```
 
-Verified live: gpt-oss-120b produces valid Triton kernel edits with
-`@triton.jit` and `solution()` on both ops, with real token counts and cost
-tracking. The crash-safe optimizer logs compile errors as rejected trials
-instead of aborting the run.
+## Public HUD Tasks
 
-Outputs:
-
-- `demo/protean-demo-results.md`
-- `demo/protean-demo-results.json`
-- `demo/hud-demo-agent-results.json`
-- `runs/protean-overnight/best_kernel.py`
-- `runs/protean-overnight/trials.jsonl`
-- `runs/protean-overnight/summary.json`
-- `runs/protean-overnight/tiny_policy.json`
-
-Each optimizer trial logs the implementation path, edit reason, harness settings, score before/after, delta versus the current best, acceptance decision, elapsed time, and model cost. The current deterministic policy has `model_cost_usd: 0.0`; model-backed edits should fill that field later.
-
-If CUDA, PyTorch, or Triton are missing, GPU scripts fail closed with `cuda_unavailable`.
+| HUD task id | Op | Split | Default shape |
+|---|---|---|---:|
+| `elementwise_add_relu_train` | `elementwise_add_relu` | train | 1024 |
+| `elementwise_add_relu_held_out` | `elementwise_add_relu` | held-out | 1536 |
+| `rmsnorm_train` | `rmsnorm` | train | 1024 |
+| `rmsnorm_held_out` | `rmsnorm` | held-out | 1536 |
 
 ## Verified Artifacts
 
-Latest Spark + HUD run:
+| Artifact | Purpose |
+|---|---|
+| [HUD passing demo job](https://hud.ai/jobs/813e572399c842c78d5a515f7644b4ae) | Shows non-zero reward in HUD dashboard |
+| [HUD generic-agent integration job](https://hud.ai/jobs/22314aa9438c4d41bb98edeadea29913) | Shows standard HUD eval path with a weak one-step agent |
+| `demo/hud-demo-agent-results.json` | Local copy of passing HUD demo results |
+| `demo/protean-demo-results.json` | Local benchmark artifact |
+| `runs/protean-overnight/trials.jsonl` | Optimizer trial trace |
+| `runs/protean-overnight/candidates/` | Every generated candidate source |
 
-- HUD integration job with generic one-step agent: https://hud.ai/jobs/22314aa9438c4d41bb98edeadea29913
-- HUD passing demo job with Protean demo agent: https://hud.ai/jobs/813e572399c842c78d5a515f7644b4ae
-- HUD passing demo artifact: `demo/hud-demo-agent-results.json`
+## Reward Shape
 
-Passing HUD demo results from Spark GB10:
-
-| Task | Split | Shape | Reward | Correct | Speedup |
-|---|---|---:|---:|---|---:|
-| `elementwise_add_relu` | held-out | 1536 | 1.3 | true | 2.08x |
-| `elementwise_add_relu` | train | 1024 | 1.3 | true | 1.55x |
-| `rmsnorm` | held-out | 1536 | 1.3 | true | 6.87x |
-| `rmsnorm` | train | 1024 | 1.3 | true | 6.38x |
-
-Spark optimizer preflight before the HUD run:
-
-| Op | Best score | Accepted |
-|---|---:|---:|
-| `elementwise_add_relu` | `(1.998708, 1.294553, 3)` | 1/5 |
-| `rmsnorm` | `(8.730407, 1.3, 3)` | 0/5 |
-
-## Reward Output
-
-The grader returns a plain dict:
+The grader returns structured JSON:
 
 ```json
 {
   "reward": 1.3,
   "correct": true,
-  "speedup": 1.62,
-  "t_eager_ms": 0.018,
-  "t_kernel_ms": 0.011,
+  "speedup": 2.07563,
+  "t_eager_ms": 0.007904,
+  "t_kernel_ms": 0.003808,
   "split": "held_out",
-  "caps": []
+  "caps": [],
+  "launches_timed": 20,
+  "dtype_ok": true,
+  "shape_ok": true
 }
 ```
 
-Hard failures get zero reward. Slow-but-correct kernels can report correctness, but do not earn speedup reward below the floor.
+Hard failures get reward `0.0`. Correct-but-slow kernels can be reported as correct, but do not earn speedup reward below the speedup floor.
 
-## Add Next
+## Repository Map
 
-1. Use the 1M policy head as the default learned edit-ordering policy after enough traces exist.
-2. Let the model improve `src/protean/model/rl_layer.py` and `src/protean/model/harness.py`, with every change logged.
-3. Make Fireworks-generated edits robust enough to run unattended overnight.
-4. Add training/RL only after the optimizer loop is stable on two ops.
+| Path | Role |
+|---|---|
+| `src/protean/grader.py` | Direct verifier entrypoint and HUD result adapter |
+| `src/protean/bench_core.py` | CUDA correctness and timing harness |
+| `src/protean/env.py` | HUD wrapper exposing four task ids |
+| `src/protean/optimizer.py` | Iterative candidate generation, evaluation, accept/reject, logging |
+| `src/protean/kernels.py` | Known-good kernels and red-team examples |
+| `src/protean/model/` | Policy, RL layer, Fireworks backend, 1M learned head |
+| `scripts/run_hud_demo_agent.py` | Deterministic HUD demo agent for non-zero dashboard proof |
+| `docs/FIGURES.md` | Reusable Mermaid diagrams and result tables for the demo |
+| `docs/` | Architecture, technical spec, build checklist, open issues |
 
-KERNEL-FORGE notes live in `docs/strategy/KERNEL_FORGE_AUDIT.md`; they are background, not the build path.
-The daVinci-kernel paper is included under `docs/papers/` with `davinci-kernel-2606.16497.llm.txt` as the LLM-first reading companion.
-For implementation structure, read `docs/ARCHITECTURE.md`.
+## What This Is Not Claiming Yet
+
+Protean does not yet claim that a trained model beats every hand-optimized kernel. The guaranteed demo is base PyTorch eager versus verified hand Triton, plus a working optimizer loop that can accept/reject generated edits. Fireworks and learned-policy runs are the path toward model-generated improvements, not the core proof.
+
+## Next
+
+1. Run Fireworks overnight with `FIREWORKS_API_KEY` on Spark.
+2. Keep every generated candidate and rejected compile/runtime error in `trials.jsonl`.
+3. Train the 1M policy head from those traces.
+4. Compare deterministic, Fireworks, and learned-policy edit ordering on held-out shapes.

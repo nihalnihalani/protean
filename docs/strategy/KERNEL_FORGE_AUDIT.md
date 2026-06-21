@@ -1,28 +1,60 @@
 # KERNEL-FORGE Audit Lineage
 
-KERNEL-FORGE was the internal research plan. Protean is the cleaned-up public implementation.
+KERNEL-FORGE was the larger research plan. Protean is the public, hackathon-ready implementation.
 
-## What Protean Keeps
+## Decision
 
-- The held-out shape generalization moat.
-- The verifier-first product story.
-- The anti-hack framing: correctness, real Triton launch, dtype/shape integrity, and measured speed.
-- The Modal/HUD sponsor alignment.
+Protean wins the public repo role because it has a narrower promise and a working artifact:
 
-## What Protean Cuts From The Critical Path
+> Build the smallest verifier-first loop that can grade GPU kernels, show a credible PyTorch-vs-Triton delta, and log every optimizer decision.
 
-- Overnight GRPO as a required success condition.
+KERNEL-FORGE remains useful as adversarial background. It should not define the README promise.
+
+## What Protean Kept
+
+- Held-out shape grading as the generalization target.
+- Verifier-first design.
+- Anti-hack framing: no PyTorch passthrough, real Triton launch, dtype/shape integrity.
+- HUD as the public dashboard wrapper.
+- Fireworks as the model-backed edit generator.
+- Full trace logging for generated candidates.
+
+## What Protean Cut
+
+- GRPO as a required success condition.
+- Large "first ever" claims.
 - Multi-op graph generation.
-- Multi-agent daVinci-style skill selection and summarization.
-- Large claims about being first or complete relative to every kernel-RL system.
+- Multi-agent research machinery.
+- Unverified state-of-the-art claims.
 
-## Best-Of-Both-Worlds Decision
+## Best-Of-Both-Worlds Shape
 
-Protean uses the KERNEL-FORGE adversarial analysis, but narrows the build to the artifact judges can inspect:
+```mermaid
+flowchart LR
+    A["KERNEL-FORGE audit ideas"] --> B["Protean verifier"]
+    A --> C["Protean anti-hack checks"]
+    A --> D["Protean held-out split"]
+    B --> E["HUD demo"]
+    C --> E
+    D --> E
+    E --> F["Fireworks overnight optimizer"]
+```
 
-1. A working verifier.
-2. A train-vs-held-out shape split.
-3. A PyTorch eager vs hand-optimized Triton delta.
-4. Red-team examples that score zero.
+## Current Public Claim
 
-If training succeeds later, it strengthens the story. It is not required for the v1 demo to be credible.
+Protean makes held-out shape performance the primary grading target for GPU-kernel optimization agents.
+
+The current repo proves:
+
+1. HUD can grade Protean tasks.
+2. Known-good Triton kernels earn non-zero reward.
+3. The optimizer saves and logs candidates.
+4. Candidate crashes are rejected and preserved.
+
+The repo does not yet prove:
+
+1. Fireworks beats the hand kernel overnight.
+2. The 1M learned policy head improves edit ordering.
+3. GRPO-trained model kernels beat all baselines.
+
+Those are next experiments, not current demo claims.

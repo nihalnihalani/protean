@@ -1,53 +1,125 @@
-# Protean Lean Implementation Plan
+# Implementation Plan
 
-## Rule
+Protean is built in layers. Each layer must be demonstrable before the next one matters.
 
-Keep the repo small. The goal is an overnight optimizer, but each layer must work on Spark before adding the next layer.
+## Current North Star
+
+> Throw a GPU kernel at Protean, let it run overnight, and wake up with a faster correct kernel plus a complete trace of every edit, benchmark, failure, token, and decision.
+
+For the hackathon, the proof is smaller:
+
+1. Show a trustworthy verifier.
+2. Show non-zero HUD reward on real GPU kernels.
+3. Show an optimizer loop that saves and logs every candidate.
+4. Show the path for Fireworks/model-backed edits.
 
 ## Layer 1: Verifier
 
-- Grade one op: `elementwise_add_relu`.
-- Compare candidate Triton against PyTorch eager.
-- Return structured reward with correctness, speedup, timing, split, and caps.
-- Reject obvious hacks: PyTorch passthrough, no `@triton.jit`, dtype mismatch, shape mismatch.
+Status: implemented and verified.
 
-## Layer 2: Demo
+- Two ops: `elementwise_add_relu`, `rmsnorm`.
+- PyTorch eager reference for each op.
+- Known-good hand-written Triton implementation for each op.
+- Fresh random inputs for correctness.
+- CUDA-event timing with warmup and median timing.
+- Structured reward JSON.
+- Static anti-hack checks.
+- Held-out shapes disjoint from train shapes.
 
-- Run train and held-out shapes.
-- Produce `demo/protean-demo-results.md` and `.json`.
-- Accept v1 when at least one held-out row is correct and faster than PyTorch eager.
+Acceptance:
 
-## Layer 3: Iterative Optimizer
+```bash
+python -m pytest -q
+python scripts/check_redteam.py
+python scripts/smoke_verifier.py --op elementwise_add_relu
+python scripts/smoke_verifier.py --op rmsnorm
+```
 
-- Start from the current best kernel.
-- Generate candidate edits through `src/protean/model/policy.py`.
-- Grade each candidate.
-- Accept only candidates that improve held-out speed/reward through `src/protean/model/rl_layer.py`.
-- Log each trial as JSONL with candidate source path, edit reason, harness settings, score, delta versus the current best, acceptance, elapsed time, model cost, and per-shape results.
-- Write the best kernel to `runs/protean-overnight/best_kernel.py`.
+## Layer 2: HUD Proof
 
-## Layer 4: Model-Agent Self-Improvement
+Status: implemented and verified.
 
-- Keep all model-related files in `src/protean/model/`.
-- Train the v1 1M-parameter policy head from `runs/protean-overnight/trials.jsonl`.
-- Use the learned policy to reorder future kernel edits.
-- Use Fireworks `gpt-oss-120b` as the first model-backed kernel edit generator.
-- Let the model propose changes to the edit policy, RL scoring rule, and harness settings.
-- Run the same verifier after every policy change.
-- Keep policy changes only when they improve held-out speed or reduce wasted trials.
-- Log policy diffs and their before/after optimizer outcomes.
+The HUD wrapper exposes four tasks and calls the direct Protean grader. The deterministic demo agent submits known-good kernels so the dashboard shows the verifier working, not the randomness of a weak one-step generic model.
 
-## Layer 5: Add More
+Passing job:
 
-Only after Layer 1 and 2 pass on Spark:
+https://hud.ai/jobs/813e572399c842c78d5a515f7644b4ae
 
-1. Replace deterministic edits with a model-backed edit policy.
-2. Let the model propose harness and reward mutations inside `src/protean/model/`.
-3. Add HUD remote packaging.
-4. Add GRPO training.
+Acceptance:
 
-Use `docs/papers/davinci-kernel-2606.16497.llm.txt` before the PDF when adding training features. The paper is context, not v1 scope.
+```bash
+HUD_API_KEY=... PYTHONPATH=src python scripts/run_hud_demo_agent.py
+```
 
-## Current Target
+## Layer 3: Optimizer Loop
 
-Run on `ssh spark`, an NVIDIA GB10 host. Spark must have a user-local Python environment with PyTorch, Triton, and pytest.
+Status: implemented and verified.
+
+- Starts from current best kernel.
+- Generates candidate edits.
+- Writes every candidate to disk.
+- Evaluates train and held-out shapes.
+- Scores by held-out speed first, reward second, held-out correctness count third.
+- Accepts only strict improvements.
+- Logs every trial to JSONL.
+- Converts verifier crashes into rejected trial records.
+
+Acceptance:
+
+```bash
+python scripts/run_optimizer.py --all-ops --max-rounds 1
+```
+
+## Layer 4: Model-Backed Edits
+
+Status: wired, requires `FIREWORKS_API_KEY` for new runs.
+
+Fireworks path:
+
+- Uses OpenAI-compatible chat completions.
+- Requests strict JSON with `response_format={"type": "json_object"}`.
+- Uses `reasoning_effort="low"`.
+- Falls back from `content` to `reasoning_content` for `gpt-oss`.
+- Tracks token count.
+- Produces the same `CandidateEdit` record as local policies.
+
+Next run:
+
+```bash
+export FIREWORKS_API_KEY=...
+python scripts/run_optimizer.py --edit-policy fireworks --all-ops --max-rounds 20 --out-dir runs/protean-fireworks-overnight
+```
+
+## Layer 5: Learned Policy Head
+
+Status: implemented as v1 1M-parameter controller.
+
+Purpose:
+
+- Learn which edit to try next from verifier traces.
+- Reorder deterministic edit actions.
+- Stay small enough to train quickly during the hackathon.
+
+Commands:
+
+```bash
+python scripts/train_tiny_policy.py --trace runs/protean-overnight/trials.jsonl
+python scripts/run_optimizer.py --edit-policy learned --policy-path runs/protean-overnight/tiny_policy.json
+```
+
+## Stretch
+
+Only after the above is stable:
+
+1. Let the model edit `src/protean/model/harness.py`.
+2. Let the model propose changes to `src/protean/model/rl_layer.py`.
+3. Add more ops.
+4. Add GRPO/LoRA training.
+5. Compare deterministic, Fireworks, learned-policy, and trained-agent curves.
+
+## Do Not Do Yet
+
+- Do not make GRPO required for the demo.
+- Do not claim trained model superiority without a real held-out benchmark.
+- Do not add unrelated abstractions before Fireworks overnight traces exist.
+- Do not create a second HUD-specific grader.

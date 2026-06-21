@@ -71,7 +71,7 @@ Do not add these to the current critical path:
 - LLM reranking for skill selection.
 - Full daVinci-style training loop.
 
-Those are research extensions. Protean v1 is intentionally smaller: one op, one verifier, one PyTorch-vs-Triton delta on held-out shapes.
+Those are research extensions. Protean v1 is intentionally smaller: two ops, one verifier, one HUD wrapper, and concrete PyTorch-vs-Triton deltas on held-out shapes.
 
 ## Relationship To Protean
 
