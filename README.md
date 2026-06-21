@@ -34,6 +34,7 @@ The verifier is the measurement core. The product is the improvement loop around
 - Demo scripts that output JSON and Markdown benchmark artifacts.
 - Iterative optimizer that edits the current best kernel, evaluates each candidate, accepts improvements, and logs every trial.
 - One model-agent folder, `src/protean/model/`, for the edit policy, RL layer, harness policy, prompts, and model config.
+- HUD dashboard proof with a deterministic Protean demo agent that submits known-good kernels through the same HUD grader.
 
 ## Install
 
@@ -102,7 +103,8 @@ Run the HUD task wrapper:
 python -m protean.env
 python scripts/smoke_verifier.py --op elementwise_add_relu
 python scripts/smoke_verifier.py --op rmsnorm
-hud eval src/protean/env.py
+PYTHONPATH=src hud task list --source src/protean/env.py
+HUD_API_KEY=... PYTHONPATH=src python scripts/run_hud_demo_agent.py
 ```
 
 HUD exposes four task ids:
@@ -155,6 +157,7 @@ Outputs:
 
 - `demo/protean-demo-results.md`
 - `demo/protean-demo-results.json`
+- `demo/hud-demo-agent-results.json`
 - `runs/protean-overnight/best_kernel.py`
 - `runs/protean-overnight/trials.jsonl`
 - `runs/protean-overnight/summary.json`
@@ -163,6 +166,30 @@ Outputs:
 Each optimizer trial logs the implementation path, edit reason, harness settings, score before/after, delta versus the current best, acceptance decision, elapsed time, and model cost. The current deterministic policy has `model_cost_usd: 0.0`; model-backed edits should fill that field later.
 
 If CUDA, PyTorch, or Triton are missing, GPU scripts fail closed with `cuda_unavailable`.
+
+## Verified Artifacts
+
+Latest Spark + HUD run:
+
+- HUD integration job with generic one-step agent: https://hud.ai/jobs/22314aa9438c4d41bb98edeadea29913
+- HUD passing demo job with Protean demo agent: https://hud.ai/jobs/813e572399c842c78d5a515f7644b4ae
+- HUD passing demo artifact: `demo/hud-demo-agent-results.json`
+
+Passing HUD demo results from Spark GB10:
+
+| Task | Split | Shape | Reward | Correct | Speedup |
+|---|---|---:|---:|---|---:|
+| `elementwise_add_relu` | held-out | 1536 | 1.3 | true | 2.08x |
+| `elementwise_add_relu` | train | 1024 | 1.3 | true | 1.55x |
+| `rmsnorm` | held-out | 1536 | 1.3 | true | 6.87x |
+| `rmsnorm` | train | 1024 | 1.3 | true | 6.38x |
+
+Spark optimizer preflight before the HUD run:
+
+| Op | Best score | Accepted |
+|---|---:|---:|
+| `elementwise_add_relu` | `(1.998708, 1.294553, 3)` | 1/5 |
+| `rmsnorm` | `(8.730407, 1.3, 3)` | 0/5 |
 
 ## Reward Output
 

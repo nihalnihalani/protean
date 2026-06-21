@@ -85,8 +85,9 @@ def to_eval_result(grade_dict: dict):
     from hud.graders import EvaluationResult, SubScore
 
     reward = grade_dict["reward"]
+    hud_subscore = max(0.0, min(float(reward), 1.0))
     return EvaluationResult(
-        score=reward,
-        subscores=[SubScore(name="reward", value=reward, weight=1.0)],
+        reward=reward,
+        subscores=[SubScore(name="reward", value=hud_subscore, weight=1.0)],
         info=grade_dict,
     )

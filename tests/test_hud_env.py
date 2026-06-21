@@ -1,4 +1,5 @@
 from protean.env import HUD_TASKS, grade_hud_source, hud_prompt, task_metadata
+from protean.grader import to_eval_result
 from protean.kernels import PYTORCH_PASSTHROUGH
 
 
@@ -32,6 +33,12 @@ def test_task_metadata_lists_prompt_paths():
     rows = task_metadata()
     assert len(rows) == 4
     assert all(row["prompt_path"].endswith("prompt.md") for row in rows)
+
+
+def test_hud_eval_result_caps_subscore_but_keeps_reward_score():
+    result = to_eval_result({"reward": 1.3})
+    assert result.reward == 1.3
+    assert result.subscores[0].value == 1.0
 
 
 def test_hud_registration_uses_name_api():
