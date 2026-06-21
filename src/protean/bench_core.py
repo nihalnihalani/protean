@@ -29,6 +29,7 @@ def _ensure_triton_cache_dir() -> None:
     candidates = [Path(current)] if current else []
     candidates.append(Path("/triton-cache"))
     candidates.append(Path.home() / ".cache" / "protean-triton")
+    candidates.append(Path("/tmp/protean-triton-cache"))
 
     for path in candidates:
         try:
