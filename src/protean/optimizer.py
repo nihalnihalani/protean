@@ -10,7 +10,7 @@ import json
 import time
 from pathlib import Path
 
-from protean.grader import grade_source
+from protean.grader import grade_source, optimizer_reward
 from protean.kernels import HAND_OPTIMIZED_ELEMENTWISE_ADD_RELU, seed_kernel_for
 from protean.model.policy import learned_kernel_edits, local_kernel_edits
 from protean.model.rl_layer import accept_candidate, score, score_delta
@@ -30,11 +30,22 @@ def evaluate_kernel(source: str, *, op: str = "elementwise_add_relu", reps: int,
         sum(row["speedup"] for row in correct_held_out) / len(correct_held_out) if correct_held_out else 0.0
     )
     mean_reward = sum(row["reward"] for row in rows) / len(rows)
+    internal_rewards = [optimizer_reward(row) for row in rows]
+    held_out_internal_rewards = [optimizer_reward(row) for row in held_out]
+    train_internal_rewards = [optimizer_reward(row) for row in rows if row["split"] == "train"]
     return {
         "rows": rows,
         "correct_held_out": len(correct_held_out),
         "mean_held_out_speedup": round(mean_held_out_speedup, 6),
         "mean_reward": round(mean_reward, 6),
+        "mean_optimizer_reward": round(sum(internal_rewards) / len(internal_rewards), 6) if internal_rewards else 0.0,
+        "mean_train_optimizer_reward": round(sum(train_internal_rewards) / len(train_internal_rewards), 6)
+        if train_internal_rewards
+        else 0.0,
+        "mean_held_out_optimizer_reward": round(sum(held_out_internal_rewards) / len(held_out_internal_rewards), 6)
+        if held_out_internal_rewards
+        else 0.0,
+        "best_row_optimizer_reward": round(max(internal_rewards), 6) if internal_rewards else 0.0,
     }
 
 
@@ -46,10 +57,50 @@ def failed_evaluation_summary(exc: Exception) -> dict:
         "correct_held_out": 0,
         "mean_held_out_speedup": 0.0,
         "mean_reward": 0.0,
+        "mean_optimizer_reward": 0.0,
+        "mean_train_optimizer_reward": 0.0,
+        "mean_held_out_optimizer_reward": 0.0,
+        "best_row_optimizer_reward": 0.0,
         "eval_error": {
             "type": type(exc).__name__,
             "message": str(exc),
         },
+    }
+
+
+def improvement_record(
+    *,
+    event: str,
+    op: str,
+    trial: int,
+    edit: str,
+    accepted: bool,
+    candidate_summary: dict,
+    best_summary_before: dict | None,
+    best_summary_after: dict,
+    eval_error: dict | None = None,
+) -> dict:
+    """Small per-trial curve row for dashboards and overnight logs."""
+
+    before_reward = float((best_summary_before or {}).get("mean_optimizer_reward", 0.0))
+    candidate_reward = float(candidate_summary.get("mean_optimizer_reward", 0.0))
+    after_reward = float(best_summary_after.get("mean_optimizer_reward", 0.0))
+    return {
+        "event": event,
+        "time": time.time(),
+        "op": op,
+        "trial": trial,
+        "edit": edit,
+        "accepted": bool(accepted),
+        "candidate_optimizer_reward": round(candidate_reward, 6),
+        "best_optimizer_reward_before": round(before_reward, 6),
+        "best_optimizer_reward_after": round(after_reward, 6),
+        "delta_optimizer_reward": round(candidate_reward - before_reward, 6),
+        "candidate_mean_reward": candidate_summary.get("mean_reward", 0.0),
+        "candidate_held_out_speedup": candidate_summary.get("mean_held_out_speedup", 0.0),
+        "candidate_correct_held_out": candidate_summary.get("correct_held_out", 0),
+        "best_held_out_speedup_after": best_summary_after.get("mean_held_out_speedup", 0.0),
+        "eval_error": eval_error,
     }
 
 
@@ -104,6 +155,7 @@ def run_optimization(
     candidate_dir = out / "candidates"
     candidate_dir.mkdir(exist_ok=True)
     log_path = out / "trials.jsonl"
+    improvement_log_path = out / f"improvements_{op}.jsonl"
     best_path = out / f"best_kernel_{op}.py"
     summary_path = out / f"summary_{op}.json"
 
@@ -127,7 +179,7 @@ def run_optimization(
             group=hud_group,
         )
 
-    with log_path.open("a") as log:
+    with log_path.open("a") as log, improvement_log_path.open("a") as improvement_log:
         log.write(
             json.dumps(
                 {
@@ -141,6 +193,22 @@ def run_optimization(
                     "score": best_score,
                     "summary": best_summary,
                 },
+                sort_keys=True,
+            )
+            + "\n"
+        )
+        improvement_log.write(
+            json.dumps(
+                improvement_record(
+                    event="seed",
+                    op=op,
+                    trial=0,
+                    edit="seed",
+                    accepted=True,
+                    candidate_summary=best_summary,
+                    best_summary_before=None,
+                    best_summary_after=best_summary,
+                ),
                 sort_keys=True,
             )
             + "\n"
@@ -256,12 +324,30 @@ def run_optimization(
                     )
                     + "\n"
                 )
+                improvement_log.write(
+                    json.dumps(
+                        improvement_record(
+                            event="trial",
+                            op=op,
+                            trial=trial_count,
+                            edit=edit.name,
+                            accepted=accepted,
+                            candidate_summary=candidate_summary,
+                            best_summary_before=before_summary,
+                            best_summary_after=best_summary,
+                            eval_error=eval_error,
+                        ),
+                        sort_keys=True,
+                    )
+                    + "\n"
+                )
 
     final = {
         "best_score": best_score,
         "best_summary": best_summary,
         "best_kernel": str(best_path),
         "log": str(log_path),
+        "improvement_log": str(improvement_log_path),
         "trials": trial_count,
         "accepted": accepted_count,
         "elapsed_sec": round(time.time() - started, 6),

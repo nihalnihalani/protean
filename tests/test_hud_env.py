@@ -1,5 +1,5 @@
 from protean.env import HUD_TASKS, grade_hud_source, hud_prompt, task_metadata
-from protean.grader import to_eval_result
+from protean.grader import optimizer_reward, to_eval_result
 from protean.kernels import PYTORCH_PASSTHROUGH
 from protean.task_catalog import OPS
 
@@ -32,7 +32,7 @@ def test_task_metadata_lists_prompt_paths():
     assert all(row["prompt_path"].endswith("prompt.md") for row in rows)
 
 
-def test_hud_eval_result_rewards_correct_kernels_above_one_and_keeps_raw_score():
+def test_hud_eval_result_uses_continuous_percent_and_keeps_internal_reward():
     result = to_eval_result(
         {
             "reward": 1.3,
@@ -42,10 +42,11 @@ def test_hud_eval_result_rewards_correct_kernels_above_one_and_keeps_raw_score()
             "caps": [],
         }
     )
-    assert result.reward == 2.3
+    assert result.reward == 0.65
     assert result.info["protean_reward_raw"] == 1.3
     assert result.info["protean_reward_normalized"] == 0.65
-    assert result.info["hud_reward_correctness_floor"] == 1.0
+    assert result.info["optimizer_reward"] == 2.3
+    assert optimizer_reward(result.info) == 2.3
     assert {subscore.name for subscore in result.subscores} == {
         "hud_reward",
         "protean_reward",

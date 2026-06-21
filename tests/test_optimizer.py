@@ -5,7 +5,7 @@ import types
 from protean.kernels import HAND_OPTIMIZED_ELEMENTWISE_ADD_RELU
 from protean.model.policy import local_kernel_edits
 from protean.model.rl_layer import score, score_delta
-from protean.optimizer import run_optimization
+from protean.optimizer import evaluate_kernel, run_optimization
 
 
 def test_local_edits_modify_current_best_source():
@@ -55,6 +55,14 @@ def test_optimizer_logs_rejected_trial_when_candidate_eval_crashes(tmp_path, mon
     assert trial["summary"]["eval_error"] == trial["eval_error"]
     assert trial["score"] == [0.0, 0.0, 0]
     assert (tmp_path / trial["source_path"]).exists()
+    improvements = [
+        json.loads(line)
+        for line in (tmp_path / "improvements_elementwise_add_relu.jsonl").read_text().splitlines()
+    ]
+    assert improvements[0]["event"] == "seed"
+    assert improvements[1]["event"] == "trial"
+    assert improvements[1]["candidate_optimizer_reward"] == 0.0
+    assert improvements[1]["accepted"] is False
 
 
 def test_optimizer_streams_each_trial_to_hud_when_enabled(tmp_path, monkeypatch):
@@ -135,3 +143,22 @@ def test_optimizer_logs_hud_stream_error_without_killing_trial(tmp_path, monkeyp
     trial = [row for row in rows if row["event"] == "trial"][0]
     assert trial["hud_stream"] is None
     assert trial["hud_stream_error"] == {"type": "RuntimeError", "message": "hud unavailable"}
+
+
+def test_evaluate_kernel_summary_includes_internal_optimizer_reward(monkeypatch):
+    import protean.optimizer as optimizer
+
+    def fake_grade_source(source, *, op, split, shape, reps, warmup):
+        return {
+            "reward": 0.5,
+            "correct": True,
+            "speedup": 2.0,
+            "caps": [],
+            "split": split,
+        }
+
+    monkeypatch.setattr(optimizer, "grade_source", fake_grade_source)
+    summary = evaluate_kernel("source", reps=1, warmup=1)
+    assert summary["mean_reward"] == 0.5
+    assert summary["mean_optimizer_reward"] == 1.5
+    assert summary["mean_held_out_optimizer_reward"] == 1.5

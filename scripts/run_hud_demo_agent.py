@@ -183,6 +183,8 @@ async def _run(args: argparse.Namespace) -> int:
                 {
                     "slug": slug,
                     "reward": run.reward,
+                    "optimizer_reward": hud_info.get("optimizer_reward") or info.get("optimizer_reward"),
+                    "protean_reward_raw": hud_info.get("protean_reward_raw") or info.get("protean_reward_raw"),
                     "status": run.trace.status,
                     "op": hud_info.get("op") or info.get("op"),
                     "split": hud_info.get("split") or info.get("split"),
@@ -203,6 +205,9 @@ async def _run(args: argparse.Namespace) -> int:
         "taskset": args.taskset,
         "taskset_id": taskset.api_id,
         "mean_reward": job.reward,
+        "mean_optimizer_reward": (
+            sum(float(row["optimizer_reward"] or 0.0) for row in rows) / len(rows) if rows else 0.0
+        ),
         "runs": rows,
     }
     out.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n")
@@ -213,6 +218,7 @@ async def _run(args: argparse.Namespace) -> int:
         speedup_str = f"{row['speedup']:.2f}x" if row["speedup"] else "—"
         print(
             f"  {row['slug']}: reward={row['reward']:.3f} "
+            f"optimizer_reward={float(row['optimizer_reward'] or 0.0):.3f} "
             f"correct={row['correct']} speedup={speedup_str} caps={row['caps'] or []}"
         )
     print(out)
