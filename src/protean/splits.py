@@ -1,16 +1,27 @@
-"""Protean — stub extracted from docs/IMPLEMENTATION_PLAN.md (section 4). Fill in TODOs to implement."""
+"""Frozen train and held-out shape split for the verifier-first MVP."""
 
-# splits.py — THE moat invariant, frozen & asserted at import time
-from dataclasses import dataclass
+from __future__ import annotations
 
-TRAIN_M = (256, 512, 1024, 2048)              # fixed discrete grid
-TEST_M  = (400, 800, 1600,                     # multiples of 100 — rare in GPU code
-           383, 769,                           # off-by-one prime-adjacent — provably unusual
-           3072)                               # crosses a tiling boundary (block flips) — structural disjointness
+from typing import Literal
 
-def _assert_split_disjoint():
-    assert set(TRAIN_M).isdisjoint(set(TEST_M)), "SPLIT REGRESSION — moat destroyed"
-    # also assert no test shape is an exact power-of-two on the train grid
-    assert all(m not in TRAIN_M for m in TEST_M)
+Split = Literal["train", "held_out"]
 
-_assert_split_disjoint()                        # runs on import, in CI, AND inside freeze()
+TRAIN_SHAPES = (1024, 2048, 4096)
+HELD_OUT_SHAPES = (1536, 3072, 5632)
+
+
+def assert_disjoint() -> None:
+    overlap = set(TRAIN_SHAPES) & set(HELD_OUT_SHAPES)
+    if overlap:
+        raise AssertionError(f"train/held-out shape overlap: {sorted(overlap)}")
+
+
+def shapes_for_split(split: Split) -> tuple[int, ...]:
+    if split == "train":
+        return TRAIN_SHAPES
+    if split == "held_out":
+        return HELD_OUT_SHAPES
+    raise ValueError(f"unknown split: {split}")
+
+
+assert_disjoint()

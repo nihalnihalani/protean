@@ -1,28 +1,17 @@
-"""Protean — stub extracted from docs/IMPLEMENTATION_PLAN.md (section 4). Fill in TODOs to implement."""
+"""Hidden-grade compatible wrapper for the elementwise_add_relu MVP."""
 
-# grade.py  (root:700, baked into image, loaded by grader via spec_from_file_location)
-import sys, hashlib, os
-sys.path.insert(0, "/donotaccess")
-from rewards import compute_reward          # ← the ONE authority, same path the trainer uses
+from __future__ import annotations
 
-REWARDS_HASH = "<sha256 baked at image build>"
+from pathlib import Path
 
-def _preflight():
-    h = hashlib.sha256(open("/donotaccess/rewards.py", "rb").read()).hexdigest()
-    if h != REWARDS_HASH:
-        raise RuntimeError(f"REWARDS_HASH mismatch {h} != {REWARDS_HASH} — HALT")  # never silent-0
+from protean.grader import grade_source
 
-def grade_kernel(op, M, N, dtype, kernel_src, step=0):
-    _preflight()
-    from subprocess_runner import run_bench  # fail-closed subprocess
-    bench = run_bench(op, M, N, dtype, kernel_src, timeout_s=90)
-    if bench["status"] != "ok":
-        return {"reward": 0.0, "caps": [bench["status"]], **bench}
-    return compute_reward(
-        correct=bench["correct"], speedup=bench["speedup"], pr_frac=bench["pr_frac"],
-        launches_timed=bench["launches_timed"], dtype_ok=bench["dtype_ok"],
-        shape_ok=bench["shape_ok"], step=step)
 
-def grade(workdir, override, hidden_root):     # verilog-compatible signature
-    op, M, N, dtype, src, split, step = _parse(workdir, override, hidden_root)
-    return grade_kernel(op, M, N, dtype, src, step=step)
+def grade_kernel(op, shape, dtype, kernel_src, split="held_out", step=0):
+    return grade_source(kernel_src, op=op, split=split, shape=int(shape))
+
+
+def grade(workdir, override=None, hidden_root=None):
+    path = Path(workdir) / "solution.py"
+    source = override if override is not None else path.read_text()
+    return grade_source(source, op="elementwise_add_relu", split="held_out")

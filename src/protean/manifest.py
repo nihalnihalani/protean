@@ -1,33 +1,30 @@
-"""Protean — stub extracted from docs/IMPLEMENTATION_PLAN.md (section 4). Fill in TODOs to implement."""
+"""Small task manifest helpers for local and HUD runs."""
 
-# manifest.py — freeze to versioned JSONL; the loop consumes the FROZEN file, never re-samples
-import json, os
-from protean.splits import _assert_split_disjoint   # FIX (devil's-advocate R2): missing imports -> NameError
+from __future__ import annotations
+
+import json
+from pathlib import Path
+
 from protean.sampler import sample_task
+from protean.task_catalog import OPS
 
 
-def _atomic_write(path, rows):
-    """Write .tmp then os.replace (atomic; no half-read by a concurrent rollout worker)."""
-    tmp = f"{path}.tmp"
-    with open(tmp, "w") as f:
-        for r in rows:
-            f.write(json.dumps(r) + "\n")
-    os.replace(tmp, path)
+def build_manifest(n_per_split: int = 3) -> list[dict]:
+    rows: list[dict] = []
+    for op in OPS:
+        for split in ("train", "held_out"):
+            for idx in range(n_per_split):
+                rows.append(sample_task(op.name, idx, split))
+    return rows
 
 
-def load_frozen_manifest(path="manifest_v1.jsonl"):
-    """Consumed by tasks.py; the loop reads this frozen file and never re-samples shapes."""
-    if not os.path.exists(path):
-        return []
-    with open(path) as f:
-        return [json.loads(line) for line in f if line.strip()]
+def write_manifest(path: str | Path, n_per_split: int = 3) -> None:
+    p = Path(path)
+    p.write_text("\n".join(json.dumps(row, sort_keys=True) for row in build_manifest(n_per_split)) + "\n")
 
 
-def freeze(ops, n_per_op=12, path="manifest_v1.jsonl"):
-    _assert_split_disjoint()
-    rows = []
-    for op in ops:
-        for i in range(n_per_op):
-            rows.append(sample_task(op, i, "train"))
-            rows.append(sample_task(op, i, "test"))
-    _atomic_write(path, rows)                    # write .tmp then os.replace (atomic, no half-read)
+def load_frozen_manifest(path: str | Path = "manifest_v1.jsonl") -> list[dict]:
+    p = Path(path)
+    if not p.exists():
+        return build_manifest(n_per_split=1)
+    return [json.loads(line) for line in p.read_text().splitlines() if line.strip()]

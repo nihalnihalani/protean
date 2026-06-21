@@ -1,27 +1,35 @@
-"""Protean — stub extracted from docs/IMPLEMENTATION_PLAN.md (section 4). Fill in TODOs to implement."""
+"""HUD template wrapper around the direct Protean grader."""
 
-# env.py  (skeleton)
-import os
-from hud import Environment
-from hud.environment import Workspace
-from scenario_helpers import WORKSPACE_ROOT, setup_task, _resolve_workspace_root
-from task_catalog import OPS_BY_NAME
+from __future__ import annotations
 
-AGENT_UID = int(os.environ.get("AGENT_UID", "1000"))
-AGENT_GID = int(os.environ.get("AGENT_GID", "1000"))
+from protean.grader import grade_source, to_eval_result
+from protean.splits import shapes_for_split
+from protean.task_catalog import get_op
 
-class _KernelWorkspace(Workspace):
-    # mirror verilog uid-wall: setpriv to AGENT_UID, hidden /donotaccess root:700
-    ...
+try:
+    from hud import Environment
+except Exception:  # pragma: no cover - local tests should not require HUD.
+    Environment = None
 
-@Environment.template(name="kernelforge")
-def kernel_task(op: str, M: int, N: int, dtype: str = "fp16",
-                split: str | None = "train"):    # plain str|None — NO Literal/Optional
-    spec = OPS_BY_NAME[op]
-    ws = setup_task(op, M, N, dtype, spec)        # writes prompt.md, copies hidden grade.py/reference.py
-    prompt = ws.render_prompt()                    # KernelBench Model + get_inputs contract
-    kernel_src = yield prompt                      # FIRST yield: agent returns a kernel
 
-    workdir = _resolve_workspace_root()            # /workdir on image, per-pid tmp locally
-    result = ws.grade(workdir, kernel_src)         # calls hidden grade.py via importlib
-    yield result                                   # SECOND yield: EvaluationResult
+PROMPT = """Write a Triton implementation of solution(x, y) for fused relu(x + y).
+
+Requirements:
+- x and y are CUDA float16 tensors with identical 1D shape.
+- Return a tensor matching torch.relu(x + y).
+- Use a real @triton.jit kernel. PyTorch passthrough earns zero reward.
+- Do not hardcode the shape; held-out shapes are used for grading.
+"""
+
+
+env = Environment(name="protean") if Environment is not None else None
+
+
+if env is not None:
+
+    @env.template(name="elementwise_add_relu")
+    async def kernel_opt(split: str = "train", shape: int | None = None):
+        get_op("elementwise_add_relu")
+        shape = shape or shapes_for_split(split)[0]
+        source = yield PROMPT
+        yield to_eval_result(grade_source(source or "", split=split, shape=shape))
