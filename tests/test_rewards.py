@@ -39,3 +39,22 @@ def test_shape_mismatch_fails_before_reward():
     )
     assert grade["reward"] == 0.0
     assert "shape_mismatch" in grade["caps"]
+
+
+def test_correct_faster_kernels_get_higher_rewards():
+    base = dict(correct=True, launches_timed=1, dtype_ok=True, shape_ok=True, split="held_out")
+    slow = compute_reward(**base, speedup=1.2)
+    medium = compute_reward(**base, speedup=2.0)
+    fast = compute_reward(**base, speedup=6.0)
+
+    assert slow["reward"] < medium["reward"] < fast["reward"]
+    assert slow["speedup_score"] < medium["speedup_score"] < fast["speedup_score"]
+
+
+def test_speedup_reward_is_capped_for_timing_outliers():
+    base = dict(correct=True, launches_timed=1, dtype_ok=True, shape_ok=True, split="held_out")
+    capped = compute_reward(**base, speedup=20.0)
+    outlier = compute_reward(**base, speedup=2000.0)
+
+    assert capped["reward"] == outlier["reward"]
+    assert capped["reward"] <= 2.0

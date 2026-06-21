@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 from typing import Any
 
@@ -22,6 +23,30 @@ HUD_TASKS = (
     {"id": "rmsnorm_train", "op": "rmsnorm", "split": "train"},
     {"id": "rmsnorm_held_out", "op": "rmsnorm", "split": "held_out"},
 )
+
+
+def configure_triton_cache_dir() -> str:
+    """Use Docker's warmed cache when available, otherwise a user cache."""
+
+    current = os.environ.get("TRITON_CACHE_DIR")
+    candidates = [Path(current)] if current else []
+    candidates.append(Path("/triton-cache"))
+    candidates.append(Path.home() / ".cache" / "protean-triton")
+
+    for path in candidates:
+        try:
+            path.mkdir(parents=True, exist_ok=True)
+            test_file = path / ".write-test"
+            test_file.write_text("ok")
+            test_file.unlink()
+            os.environ["TRITON_CACHE_DIR"] = str(path)
+            return str(path)
+        except Exception:
+            continue
+    raise RuntimeError("no writable Triton cache directory found")
+
+
+configure_triton_cache_dir()
 
 
 def _read_prompt(op: str) -> str:

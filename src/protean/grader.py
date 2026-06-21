@@ -77,15 +77,31 @@ def grade_source(
         split=split,
         t_eager_ms=bench["t_eager_ms"],
         t_kernel_ms=bench["t_kernel_ms"],
+        pr_frac=bench.get("pr_frac", 0.0),
     )
     return grade | {"op": op, "shape": shape}
 
 
 def to_eval_result(grade_dict: dict):
-    from hud.graders import EvaluationResult, SubScore
-
     reward = grade_dict["reward"]
     hud_subscore = max(0.0, min(float(reward), 1.0))
+    try:
+        from hud.graders import EvaluationResult, SubScore
+    except Exception:  # pragma: no cover - local tests should not require HUD.
+        from dataclasses import dataclass
+
+        @dataclass
+        class SubScore:
+            name: str
+            value: float
+            weight: float
+
+        @dataclass
+        class EvaluationResult:
+            reward: float
+            subscores: list[SubScore]
+            info: dict
+
     return EvaluationResult(
         reward=reward,
         subscores=[SubScore(name="reward", value=hud_subscore, weight=1.0)],

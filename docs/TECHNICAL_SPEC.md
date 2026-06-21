@@ -45,6 +45,8 @@ Returns a dict with:
 | `launches_timed` | timed Triton launches counted by the harness |
 | `dtype_ok` | candidate dtype equals reference dtype |
 | `shape_ok` | candidate shape equals reference shape |
+| `pr_frac` | profiler estimate of Triton GPU time / total GPU time |
+| `speedup_score` | log-scaled speedup score in `[0,1]` |
 
 ## 2. Shape Split
 
@@ -79,24 +81,18 @@ The candidate is imported from a real temporary `.py` file because Triton JIT ne
 
 ## 4. Reward Formula
 
-The current reward is intentionally simple:
+The reward is correctness-gated and speed-sensitive:
 
 ```text
 hard_failed = caps are non-empty
 correctness_reward = 0.3 if correct and dtype_ok and shape_ok else 0.0
-speedup_reward = min(speedup / 1.5, 1.0) if not hard_failed and speedup >= 1.1 else 0.0
-reward = 0.0 if hard_failed else min(correctness_reward + speedup_reward, 2.0)
+speedup_score = log(speedup / 1.1) / log(20.0 / 1.1)
+speedup_reward = 1.5 * clamp(speedup_score, 0, 1)
+pr_reward = 0.2 * clamp(pr_frac, 0, 1)
+reward = 0.0 if hard_failed else min(correctness_reward + speedup_reward + pr_reward, 2.0)
 ```
 
-Current observed passing demo reward is `1.3` because:
-
-```text
-correctness_reward = 0.3
-speedup_reward = 1.0
-total = 1.3
-```
-
-This is not daVinci's multiplicative reward. It is Protean's v1 verifier reward: correct kernels get a floor; fast kernels get speedup credit; hard failures get zero.
+Wrong kernels get the worst score: `0.0`. Correct kernels get a small correctness floor, then increasing reward as measured speedup improves. The log scale keeps `6x > 2x > 1.5x`, but dampens timing outliers.
 
 ## 5. Anti-Hack Gates
 
@@ -175,14 +171,14 @@ Spark GB10, HUD demo agent:
 
 | Op | Split | Shape | Reward | Speedup |
 |---|---|---:|---:|---:|
-| `elementwise_add_relu` | train | 1024 | 1.3 | 1.55x |
-| `elementwise_add_relu` | held-out | 1536 | 1.3 | 2.08x |
-| `rmsnorm` | train | 1024 | 1.3 | 6.38x |
-| `rmsnorm` | held-out | 1536 | 1.3 | 6.87x |
+| `elementwise_add_relu` | train | 1024 | 0.479 | 1.55x |
+| `elementwise_add_relu` | held-out | 1536 | 0.628 | 2.08x |
+| `rmsnorm` | train | 1024 | 1.211 | 6.40x |
+| `rmsnorm` | held-out | 1536 | 1.250 | 6.90x |
 
 Passing HUD job:
 
-https://hud.ai/jobs/813e572399c842c78d5a515f7644b4ae
+https://hud.ai/jobs/1c97c74a9d25423bb7fea53b6f98846b
 
 ## 10. Future Training Spec
 

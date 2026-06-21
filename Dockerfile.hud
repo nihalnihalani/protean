@@ -15,7 +15,33 @@ RUN pip3 install --no-cache-dir -e ".[gpu,hud]"
 
 RUN useradd -m -u 1000 agent
 
-# Hidden verifier directories are unreadable by the demoted agent user in HUD runs.
+# Bake reward-code integrity into hidden graders and training calibration.
+RUN REWARDS_SHA="$(sha256sum /app/src/protean/rewards.py | awk '{print $1}')" && \
+    find /app/src/protean/tasks -path '*/donotaccess/grade.py' -type f \
+        -exec sed -i "s|<sha256 baked at image build>|${REWARDS_SHA}|g" {} + && \
+    sed -i "s|<sha256 baked at image build>|${REWARDS_SHA}|g" /app/train/calibrate.py && \
+    echo "Baked REWARDS_HASH=${REWARDS_SHA}"
+
+# Canonical hidden verifier moat. HUD agents run as uid 1000 and cannot read it.
+RUN mkdir -p /donotaccess && \
+    cp /app/src/protean/rewards.py /donotaccess/rewards.py && \
+    cp /app/src/protean/reward_config.json /donotaccess/reward_config.json && \
+    for opdir in /app/src/protean/tasks/*/donotaccess; do \
+        op="$(basename "$(dirname "$opdir")")"; \
+        mkdir -p "/donotaccess/$op"; \
+        cp "$opdir/grade.py" "/donotaccess/$op/grade.py"; \
+        cp "$opdir/reference.py" "/donotaccess/$op/reference.py"; \
+    done && \
+    chown -R root:root /donotaccess && \
+    chmod -R 700 /donotaccess && \
+    test -f /donotaccess/rewards.py && \
+    test -f /donotaccess/reward_config.json && \
+    test -f /donotaccess/elementwise_add_relu/grade.py && \
+    test -f /donotaccess/rmsnorm/grade.py && \
+    su agent -c "cat /donotaccess/rewards.py" 2>&1 | grep -qE "(Permission denied|cannot open)" && \
+    echo "MOAT VERIFIED: /donotaccess is root:700 and hidden from agent"
+
+# Defense in depth for in-tree hidden files.
 RUN find /app/src/protean/tasks -path '*/donotaccess' -type d -exec chmod 700 {} + && \
     find /app/src/protean/tasks -path '*/donotaccess/*' -type f -exec chmod 600 {} + && \
     chown -R root:root /app/src/protean/tasks

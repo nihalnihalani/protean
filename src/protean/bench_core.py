@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import statistics
 import tempfile
 import uuid
@@ -9,15 +10,46 @@ import importlib.util
 import sys
 from pathlib import Path
 
-import torch
-import triton
-import triton.language as tl
+try:
+    import torch
+    import triton
+    import triton.language as tl
+except Exception:  # pragma: no cover - CPU-only unit tests can still import helpers.
+    torch = None
+    triton = None
+    tl = None
 
 from protean.anti_hack import contains_triton_jit
 from protean.task_catalog import OpSpec
 
 
+def _ensure_triton_cache_dir() -> None:
+    current = os.environ.get("TRITON_CACHE_DIR")
+    candidates = [Path(current)] if current else []
+    candidates.append(Path("/triton-cache"))
+    candidates.append(Path.home() / ".cache" / "protean-triton")
+
+    for path in candidates:
+        try:
+            path.mkdir(parents=True, exist_ok=True)
+            test_file = path / ".write-test"
+            test_file.write_text("ok")
+            test_file.unlink()
+            os.environ["TRITON_CACHE_DIR"] = str(path)
+            return
+        except Exception:
+            continue
+    raise RuntimeError("no writable Triton cache directory found")
+
+
+def _require_torch():
+    if torch is None or triton is None or tl is None:
+        raise RuntimeError("torch and triton are required for CUDA benchmark verification")
+    _ensure_triton_cache_dir()
+
+
 def make_inputs(n: int, dtype: str, seed: int, op: str) -> tuple[torch.Tensor, ...]:
+    _require_torch()
     if not torch.cuda.is_available():
         raise RuntimeError("CUDA is required for Protean benchmark verification")
     torch.manual_seed(seed)
@@ -52,6 +84,7 @@ def eager_fn_for_op(op: str):
 
 
 def load_solution(src: str):
+    _require_torch()
     temp_dir = Path(tempfile.gettempdir()) / "protean_candidates"
     temp_dir.mkdir(parents=True, exist_ok=True)
     path = temp_dir / f"candidate_{uuid.uuid4().hex}.py"
@@ -70,6 +103,7 @@ def load_solution(src: str):
 
 
 def _time_cuda(fn, args: tuple[torch.Tensor, ...], reps: int, warmup: int) -> float:
+    _require_torch()
     times: list[float] = []
     flush = torch.empty((16 * 1024 * 1024,), dtype=torch.int8, device="cuda")
 
@@ -87,7 +121,43 @@ def _time_cuda(fn, args: tuple[torch.Tensor, ...], reps: int, warmup: int) -> fl
     return statistics.median(times)
 
 
-@torch.no_grad()
+def _compute_ratio_from_events(events) -> float:
+    triton_us = 0.0
+    total_us = 0.0
+    for event in events:
+        duration = getattr(event, "self_cuda_time_total", None)
+        if duration is None:
+            duration = getattr(event, "cuda_time_total", 0.0)
+        if duration <= 0:
+            continue
+        total_us += float(duration)
+        key = (getattr(event, "key", "") or "").lower()
+        if "triton" in key or key.startswith("kernel_") or "jit" in key:
+            triton_us += float(duration)
+    if total_us <= 0:
+        return 0.0
+    return max(0.0, min(triton_us / total_us, 1.0))
+
+
+def measure_pr_frac(solution, *, n: int, spec: OpSpec, iters: int = 10) -> float:
+    """Estimate Triton GPU time / total GPU time for the candidate."""
+
+    from torch.profiler import ProfilerActivity, profile
+
+    warm_inputs = make_inputs(n, spec.dtype, seed=99, op=spec.name)
+    for _ in range(3):
+        solution(*warm_inputs)
+    torch.cuda.synchronize()
+
+    with profile(activities=[ProfilerActivity.CUDA], record_shapes=False) as prof:
+        for i in range(iters):
+            inputs = make_inputs(n, spec.dtype, seed=200 + i, op=spec.name)
+            solution(*inputs)
+        torch.cuda.synchronize()
+
+    return _compute_ratio_from_events(prof.key_averages())
+
+
 def bench_source(
     src: str,
     *,
@@ -97,6 +167,7 @@ def bench_source(
     reps: int = 50,
     warmup: int = 10,
 ) -> dict:
+    _require_torch()
     module = load_solution(src)
     solution = module.solution
     eager_fn = eager_fn_for_op(spec.name)
@@ -124,6 +195,10 @@ def bench_source(
         correct_post = torch.allclose(out_post, ref_post, rtol=spec.rtol, atol=spec.atol)
     correct = bool(correct_pre and correct_post)
     speedup = t_eager_ms / max(t_kernel_ms, 1e-9)
+    try:
+        pr_frac = measure_pr_frac(solution, n=n, spec=spec, iters=min(reps, 10))
+    except Exception:
+        pr_frac = 0.0
 
     return {
         "op": spec.name,
@@ -136,4 +211,5 @@ def bench_source(
         "t_eager_ms": t_eager_ms,
         "t_kernel_ms": t_kernel_ms,
         "launches_timed": launches_timed,
+        "pr_frac": pr_frac,
     }

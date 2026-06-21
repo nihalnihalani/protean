@@ -38,10 +38,10 @@ flowchart TD
 
 | Task | Train reward | Held-out reward | Train speedup | Held-out speedup |
 |---|---:|---:|---:|---:|
-| `elementwise_add_relu` | 1.3 | 1.3 | 1.55x | 2.08x |
-| `rmsnorm` | 1.3 | 1.3 | 6.38x | 6.87x |
+| `elementwise_add_relu` | 0.479 | 0.628 | 1.55x | 2.08x |
+| `rmsnorm` | 1.211 | 1.250 | 6.40x | 6.90x |
 
-HUD job: https://hud.ai/jobs/813e572399c842c78d5a515f7644b4ae
+HUD job: https://hud.ai/jobs/1c97c74a9d25423bb7fea53b6f98846b
 
 ## Figure 4: Optimizer Trace Shape
 

@@ -13,7 +13,7 @@ Protean turns GPU-kernel optimization into a HUD task where every submitted kern
 | Area | Status | Evidence |
 |---|---|---|
 | GPU verifier | Working on Spark GB10 | `33 passed`, smoke verifier correct on both ops |
-| HUD dashboard | Working with non-zero reward | [HUD passing job](https://hud.ai/jobs/813e572399c842c78d5a515f7644b4ae) |
+| HUD dashboard | Working with speed-sensitive reward | [HUD passing job](https://hud.ai/jobs/1c97c74a9d25423bb7fea53b6f98846b) |
 | Ops | `elementwise_add_relu`, `rmsnorm` | Both have PyTorch reference + hand Triton kernel |
 | Held-out split | Working | Train: `1024, 2048, 4096`; held-out: `1536, 3072, 5632` |
 | Anti-hack checks | Working | PyTorch passthrough, no-launch, bad-shape score zero |
@@ -27,10 +27,10 @@ Spark GB10, HUD demo agent, known-good Triton kernels, same HUD grader:
 
 | Task | Split | Shape | Reward | Correct | Speedup |
 |---|---|---:|---:|---|---:|
-| `elementwise_add_relu` | train | 1024 | 1.3 | true | 1.55x |
-| `elementwise_add_relu` | held-out | 1536 | 1.3 | true | 2.08x |
-| `rmsnorm` | train | 1024 | 1.3 | true | 6.38x |
-| `rmsnorm` | held-out | 1536 | 1.3 | true | 6.87x |
+| `elementwise_add_relu` | train | 1024 | 0.479 | true | 1.55x |
+| `elementwise_add_relu` | held-out | 1536 | 0.628 | true | 2.08x |
+| `rmsnorm` | train | 1024 | 1.211 | true | 6.40x |
+| `rmsnorm` | held-out | 1536 | 1.250 | true | 6.90x |
 
 The important part is not that these are final state-of-the-art kernels. The important part is that HUD is grading real Triton code with the same verifier Protean uses locally.
 
@@ -108,6 +108,7 @@ Run the HUD passing demo:
 export HUD_API_KEY=...
 PYTHONPATH=src hud task list --source src/protean/env.py
 PYTHONPATH=src python scripts/run_hud_demo_agent.py
+PYTHONPATH=src python scripts/verify_hud.py
 ```
 
 Use Fireworks for model-generated edits:
@@ -130,7 +131,7 @@ python scripts/run_optimizer.py --edit-policy fireworks --all-ops --max-rounds 5
 
 | Artifact | Purpose |
 |---|---|
-| [HUD passing demo job](https://hud.ai/jobs/813e572399c842c78d5a515f7644b4ae) | Shows non-zero reward in HUD dashboard |
+| [HUD passing demo job](https://hud.ai/jobs/1c97c74a9d25423bb7fea53b6f98846b) | Shows speed-sensitive non-zero reward in HUD dashboard |
 | [HUD generic-agent integration job](https://hud.ai/jobs/22314aa9438c4d41bb98edeadea29913) | Shows standard HUD eval path with a weak one-step agent |
 | `demo/hud-demo-agent-results.json` | Local copy of passing HUD demo results |
 | `demo/protean-demo-results.json` | Local benchmark artifact |
@@ -143,7 +144,7 @@ The grader returns structured JSON:
 
 ```json
 {
-  "reward": 1.3,
+  "reward": 0.628377,
   "correct": true,
   "speedup": 2.07563,
   "t_eager_ms": 0.007904,
@@ -156,7 +157,7 @@ The grader returns structured JSON:
 }
 ```
 
-Hard failures get reward `0.0`. Correct-but-slow kernels can be reported as correct, but do not earn speedup reward below the speedup floor.
+Hard failures get reward `0.0`. Correct kernels get a small correctness floor plus a log-scaled speedup reward, so faster correct kernels score higher without letting timing outliers dominate.
 
 ## Repository Map
 

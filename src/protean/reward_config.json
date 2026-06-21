@@ -1,0 +1,9 @@
+{
+  "P_TARGET": 1.5,
+  "SPEEDUP_FLOOR": 1.1,
+  "SPEEDUP_CAP": 20.0,
+  "CORRECT_FLOOR": 0.3,
+  "SPEEDUP_REWARD_WEIGHT": 1.5,
+  "PR_BONUS": 0.2,
+  "MAX_REWARD": 2.0
+}

@@ -28,7 +28,7 @@ Acceptance:
 
 Status: expected behavior, not a verifier failure.
 
-The generic one-step `claude-haiku-4-5` HUD run produced reward `0.0`. The deterministic Protean demo agent produced reward `1.3` on all four tasks. This proves the HUD verifier path works, but it also shows that a generic model needs better prompting/tooling before it can solve the tasks.
+The generic one-step `claude-haiku-4-5` HUD run produced reward `0.0`. The deterministic Protean demo agent now produces speed-sensitive non-zero rewards on all four tasks. This proves the HUD verifier path works, but it also shows that a generic model needs better prompting/tooling before it can solve the tasks.
 
 Next:
 
@@ -70,7 +70,7 @@ The 1M learned controller exists, but the README should not claim it improves ke
 
 ### 6. HUD subscore warning
 
-HUD `SubScore.value` must be `0..1`, while Protean reward can be `1.3`. The adapter caps the subscore at `1.0` and preserves Protean reward as the main HUD reward. This works, but HUD emits a warning because weighted subscores do not sum to the main reward.
+HUD `SubScore.value` must be `0..1`, while Protean reward can exceed `1.0`. The adapter caps the subscore at `1.0` and preserves Protean reward as the main HUD reward. This works, but HUD may emit a warning because weighted subscores do not sum to the main reward.
 
 Decision:
 
