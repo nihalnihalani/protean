@@ -86,6 +86,66 @@ def calibrate(tasks=None, base_model_runner=None) -> str:
     verify_rewards_hash()
     if CANONICAL_CONFIG.exists():
         json.loads(CANONICAL_CONFIG.read_text())
+
+    # Preflight KNOWN_GOOD / KNOWN_BAD verification for registered ops
+    import torch
+    if torch.cuda.is_available():
+        from protean.kernels import HAND_OPTIMIZED_ELEMENTWISE_ADD_RELU
+        import importlib.util
+
+        def _load_grade_kernel(op_name: str):
+            local_path = ROOT / "src" / "protean" / "tasks" / op_name / "donotaccess" / "grade.py"
+            if not local_path.exists():
+                local_path = Path("/donotaccess") / op_name / "grade.py"
+            if local_path.exists():
+                spec = importlib.util.spec_from_file_location(f"grade_wrapper_{op_name}", local_path)
+                if spec and spec.loader:
+                    mod = importlib.util.module_from_spec(spec)
+                    spec.loader.exec_module(mod)
+                    if hasattr(mod, "grade_kernel"):
+                        gk = mod.grade_kernel
+                        return lambda op, shape_m, shape_n, dtype, src: gk(op, shape_n, dtype, src)
+            from protean.grader import grade_source
+            return lambda op, shape_m, shape_n, dtype, src: grade_source(src, op=op, shape=shape_n)
+
+        KNOWN_GOOD_KERNELS = {
+            "elementwise_add_relu": HAND_OPTIMIZED_ELEMENTWISE_ADD_RELU,
+            "softmax_rows": """import triton
+import triton.language as tl
+import torch
+
+@triton.jit
+def softmax_kernel(x_ptr, out_ptr, n_rows, n_cols, stride_row, BLOCK_N: tl.constexpr):
+    row_idx = tl.program_id(0)
+    row_start = x_ptr + row_idx * stride_row
+    offsets = tl.arange(0, BLOCK_N)
+    mask = offsets < n_cols
+    row = tl.load(row_start + offsets, mask=mask, other=-float('inf'))
+    row_max = tl.max(row, axis=0)
+    row_exp = tl.exp(row - row_max)
+    row_sum = tl.sum(row_exp, axis=0)
+    tl.store(out_ptr + row_idx * stride_row + offsets, row_exp / row_sum, mask=mask)
+
+def solution(x):
+    M, N = x.shape
+    output = torch.empty_like(x)
+    BLOCK_N = triton.next_power_of_2(N)
+    softmax_kernel[(M,)](x, output, M, N, x.stride(0), BLOCK_N=BLOCK_N)
+    return output
+""",
+        }
+
+        KNOWN_BAD = """def solution(*args):
+    return args[0]
+"""
+
+        for op_name, good_src in KNOWN_GOOD_KERNELS.items():
+            gk = _load_grade_kernel(op_name)
+            good_res = gk(op_name, 256, 256, "fp16", good_src)
+            bad_res = gk(op_name, 256, 256, "fp16", KNOWN_BAD)
+            assert good_res["reward"] > 0.0, f"Preflight: {op_name} known_good kernel scored 0.0"
+            assert bad_res["reward"] == 0.0, f"Preflight: {op_name} known_bad kernel scored nonzero"
+
     if base_model_runner is None or not tasks:
         return "GO"
 

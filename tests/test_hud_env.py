@@ -3,13 +3,15 @@ from protean.grader import to_eval_result
 from protean.kernels import PYTORCH_PASSTHROUGH
 
 
-def test_hud_exposes_four_task_ids():
+def test_hud_exposes_six_task_ids():
     ids = {task["id"] for task in HUD_TASKS}
     assert ids == {
         "elementwise_add_relu_train",
         "elementwise_add_relu_held_out",
         "rmsnorm_train",
         "rmsnorm_held_out",
+        "softmax_rows_train",
+        "softmax_rows_held_out",
     }
 
 
@@ -31,7 +33,7 @@ def test_hud_grade_metadata_contains_reward_fields():
 
 def test_task_metadata_lists_prompt_paths():
     rows = task_metadata()
-    assert len(rows) == 4
+    assert len(rows) == 6
     assert all(row["prompt_path"].endswith("prompt.md") for row in rows)
 
 

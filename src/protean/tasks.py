@@ -9,11 +9,13 @@ from protean.env import (  # noqa: F401
     kernel_opt,
     rmsnorm_held_out,
     rmsnorm_train,
+    softmax_rows_held_out,
+    softmax_rows_train,
 )
 from protean.manifest import build_manifest, load_frozen_manifest
 
 MANIFEST_PATH = "manifest_v1.jsonl"
-MANIFEST_SHA256 = "d887a55b5556f811326bd52f4e08fbc853de1a186ab16d0471eddb559ad3dc59"
+MANIFEST_SHA256 = "a5771e24f78b44d3a3406fb13e6342cdede382b8a634a56177a5db25ef666ed1"
 
 
 def _load_tasks() -> list[dict]:

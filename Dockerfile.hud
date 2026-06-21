@@ -44,6 +44,8 @@ RUN mkdir -p /donotaccess && \
     test -f /donotaccess/reward_config.json && \
     test -f /donotaccess/elementwise_add_relu/grade.py && \
     test -f /donotaccess/rmsnorm/grade.py && \
+    test -f /donotaccess/softmax_rows/grade.py && \
+    test -f /donotaccess/softmax_rows/reference.py && \
     su agent -c "cat /donotaccess/rewards.py" 2>&1 | grep -qE "(Permission denied|cannot open)" && \
     echo "MOAT VERIFIED: /donotaccess is root:700 and hidden from agent"
 

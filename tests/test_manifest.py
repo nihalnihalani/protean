@@ -11,7 +11,7 @@ from protean.tasks import MANIFEST_SHA256, TASKS
 def test_committed_manifest_is_pinned():
     assert Path("manifest_v1.jsonl").exists()
     assert sha256_file("manifest_v1.jsonl") == MANIFEST_SHA256
-    assert len(TASKS) == 48
+    assert len(TASKS) == 72
 
 
 def test_freeze_is_deterministic(tmp_path):

@@ -62,6 +62,10 @@ def make_inputs(n: int, dtype: str, seed: int, op: str) -> tuple[torch.Tensor, .
     if op == "rmsnorm":
         weight = torch.randn((n,), device="cuda", dtype=torch_dtype)
         return x, weight
+    if op == "softmax_rows":
+        # Shape: (64, n) where n is the columns size. Scale by 2.0 as in reference.py
+        x = torch.randn((64, n), device="cuda", dtype=torch_dtype) * 2.0
+        return (x,)
     raise ValueError(f"unknown op: {op}")
 
 
@@ -75,11 +79,17 @@ def eager_rmsnorm(x: torch.Tensor, weight: torch.Tensor, eps: float = 1e-5) -> t
     return (x_f32 * rms * weight.float()).to(dtype=x.dtype)
 
 
+def eager_softmax_rows(x: torch.Tensor) -> torch.Tensor:
+    return torch.softmax(x, dim=-1)
+
+
 def eager_fn_for_op(op: str):
     if op == "elementwise_add_relu":
         return eager_elementwise_add_relu
     if op == "rmsnorm":
         return eager_rmsnorm
+    if op == "softmax_rows":
+        return eager_softmax_rows
     raise ValueError(f"unknown op: {op}")
 
 

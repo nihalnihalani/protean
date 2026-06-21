@@ -22,6 +22,8 @@ HUD_TASKS = (
     {"id": "elementwise_add_relu_held_out", "op": "elementwise_add_relu", "split": "held_out"},
     {"id": "rmsnorm_train", "op": "rmsnorm", "split": "train"},
     {"id": "rmsnorm_held_out", "op": "rmsnorm", "split": "held_out"},
+    {"id": "softmax_rows_train", "op": "softmax_rows", "split": "train"},
+    {"id": "softmax_rows_held_out", "op": "softmax_rows", "split": "held_out"},
 )
 
 
@@ -135,6 +137,12 @@ if env is not None:
         source = yield hud_prompt("rmsnorm", split, shape)
         yield to_eval_result(grade_hud_source(source or "", op="rmsnorm", split=split, shape=shape))
 
+    @_template("softmax_rows")
+    async def softmax_rows(split: str = "train", shape: int | None = None):
+        get_op("softmax_rows")
+        source = yield hud_prompt("softmax_rows", split, shape)
+        yield to_eval_result(grade_hud_source(source or "", op="softmax_rows", split=split, shape=shape))
+
     elementwise_add_relu_train = elementwise_add_relu(split="train")
     elementwise_add_relu_train.slug = "elementwise_add_relu_train"
     elementwise_add_relu_train.columns = {"op": "elementwise_add_relu", "split": "train"}
@@ -150,9 +158,18 @@ if env is not None:
     rmsnorm_held_out = rmsnorm(split="held_out")
     rmsnorm_held_out.slug = "rmsnorm_held_out"
     rmsnorm_held_out.columns = {"op": "rmsnorm", "split": "held_out"}
+
+    softmax_rows_train = softmax_rows(split="train")
+    softmax_rows_train.slug = "softmax_rows_train"
+    softmax_rows_train.columns = {"op": "softmax_rows", "split": "train"}
+
+    softmax_rows_held_out = softmax_rows(split="held_out")
+    softmax_rows_held_out.slug = "softmax_rows_held_out"
+    softmax_rows_held_out.columns = {"op": "softmax_rows", "split": "held_out"}
 else:
     elementwise_add_relu = {"id": "elementwise_add_relu", "op": "elementwise_add_relu"}
     rmsnorm = {"id": "rmsnorm", "op": "rmsnorm"}
+    softmax_rows = {"id": "softmax_rows", "op": "softmax_rows"}
     for _task_def in HUD_TASKS:
         globals()[_task_def["id"]] = dict(_task_def)
 

@@ -39,6 +39,15 @@ OPS = (
         speedup_floor=1.05,
         prompt_path="src/protean/tasks/rmsnorm/prompt.md",
     ),
+    OpSpec(
+        name="softmax_rows",
+        dtype="float16",
+        rtol=1e-2,
+        atol=1e-2,
+        p_target=1.5,
+        speedup_floor=1.1,
+        prompt_path="src/protean/tasks/softmax_rows/prompt.md",
+    ),
 )
 
 OPS_BY_NAME = {op.name: op for op in OPS}
