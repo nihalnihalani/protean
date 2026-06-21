@@ -1,6 +1,6 @@
 import json
 
-from protean.model.tiny_policy import TinyPolicyHead, load_trace_examples, train_tiny_policy
+from protean.model.tiny_policy import DEFAULT_HIDDEN_DIM, TinyPolicyHead, load_trace_examples, train_tiny_policy
 
 
 def _write_trace(path):
@@ -24,6 +24,12 @@ def _write_trace(path):
 def test_tiny_policy_has_nonzero_trainable_parameters():
     policy = TinyPolicyHead(hidden_dim=8)
     assert policy.parameter_count == 85
+
+
+def test_default_tiny_policy_is_128k_parameters():
+    policy = TinyPolicyHead()
+    assert DEFAULT_HIDDEN_DIM == 12_800
+    assert policy.parameter_count == 128_005
 
 
 def test_load_trace_examples_reads_advantages(tmp_path):

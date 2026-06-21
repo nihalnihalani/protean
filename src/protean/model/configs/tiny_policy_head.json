@@ -1,7 +1,8 @@
 {
   "policy": "tiny_policy_head",
   "goal": "learn which kernel edit to try next from verifier traces",
-  "parameter_count_default": 645,
+  "parameter_count_default": 128005,
+  "hidden_dim_default": 12800,
   "inputs": [
     "current_best_held_out_speedup",
     "current_best_reward",

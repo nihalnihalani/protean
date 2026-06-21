@@ -24,7 +24,7 @@ python scripts/train_tiny_policy.py --trace runs/protean-overnight/trials.jsonl
 python scripts/run_optimizer.py --max-rounds 1 --policy-path runs/protean-overnight/tiny_policy.json
 ```
 
-The default tiny head has 645 trainable parameters. It is intentionally much smaller than the later 100M controller; the point is to prove that verifier traces can train a policy that changes the coding agent's edit behavior.
+The default tiny head has 128,005 trainable parameters. It is intentionally much smaller than the later 100M controller; the point is to prove that verifier traces can train a policy that changes the coding agent's edit behavior.
 
 ## Boundary
 

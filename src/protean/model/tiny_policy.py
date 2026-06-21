@@ -14,6 +14,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 ACTION_BLOCK_SIZES = (128, 256, 512, 1024, 2048)
+DEFAULT_HIDDEN_DIM = 12_800
 
 
 def action_index(edit_name: str) -> int | None:
@@ -54,15 +55,15 @@ class TraceExample:
 class TinyPolicyHead:
     """One-hidden-layer policy head.
 
-    Default parameter count is 645:
-    input 4 -> hidden 64 -> 5 actions, with biases.
+    Default parameter count is 128,005:
+    input 4 -> hidden 12,800 -> 5 actions, with biases.
     """
 
     def __init__(
         self,
         *,
         input_dim: int = 4,
-        hidden_dim: int = 64,
+        hidden_dim: int = DEFAULT_HIDDEN_DIM,
         action_dim: int = len(ACTION_BLOCK_SIZES),
         seed: int = 7,
     ) -> None:
@@ -204,7 +205,7 @@ def train_tiny_policy(
     trace_path: str | Path,
     out_path: str | Path,
     *,
-    hidden_dim: int = 64,
+    hidden_dim: int = DEFAULT_HIDDEN_DIM,
     epochs: int = 200,
     lr: float = 0.05,
     seed: int = 7,
