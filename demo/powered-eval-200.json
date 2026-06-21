@@ -1,0 +1,42 @@
+{
+  "caps_seen": [],
+  "ci95": [
+    0.19066196470569138,
+    0.24074184341649482
+  ],
+  "cuda_unavailable": null,
+  "gap_ci_excludes_zero": true,
+  "gap_mean": 0.21663697932970782,
+  "mde_dz_at_n": 0.25574857018924124,
+  "n_ops": 3,
+  "n_tasks": 120,
+  "note": "SYNTHETIC artifact for plumbing/demo only \u2014 NOT measured GPU results (powered_real=false). Reproduce real numbers with scripts/run_powered_eval.py --run-dir <optimizer-run> on a GPU box; it grades the SAME real ops via the grader.",
+  "observed_dz": 2.165241289798449,
+  "ops": [
+    "elementwise_add_relu",
+    "rmsnorm",
+    "softmax_rows"
+  ],
+  "per_op_delta": {
+    "elementwise_add_relu": 0.2238971902913137,
+    "rmsnorm": 0.23207300943219034,
+    "softmax_rows": 0.19394073826561944
+  },
+  "powered": true,
+  "powered_real": false,
+  "sign_test": {
+    "ops": 3,
+    "p_one_sided": 0.125,
+    "positive": 3
+  },
+  "sign_test_advisory": true,
+  "synthetic": true,
+  "synthetic_params": {
+    "base_level": 0.45,
+    "effect": 0.22,
+    "noise": 0.2,
+    "op_spread": 0.1,
+    "rollouts": 8,
+    "seed": 1234
+  }
+}

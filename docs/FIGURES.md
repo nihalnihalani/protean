@@ -40,6 +40,9 @@ flowchart TD
 |---|---:|---:|---:|---:|
 | `elementwise_add_relu` | 0.482 | 0.628 | 1.56x | 2.08x |
 | `rmsnorm` | 1.211 | 1.255 | 6.40x | 6.97x |
+| `softmax_rows` | — | — | — | not yet benchmarked |
+
+`softmax_rows` is integrated but not yet measured for the Money Figure.
 
 HUD job: https://hud.ai/jobs/5a3ddc3f24a748d9abda38866bccb503
 

@@ -78,8 +78,17 @@ def grade_source(
         t_eager_ms=bench["t_eager_ms"],
         t_kernel_ms=bench["t_kernel_ms"],
         pr_frac=bench.get("pr_frac", 0.0),
+        caps=bench.get("caps") or None,
     )
-    return grade | {"op": op, "shape": shape}
+    # Advisory caps (e.g. launch_count_unverified on Triton builds without the
+    # runtime launch-hook surface) are surfaced for auditability but do NOT gate
+    # the reward -- they are kept separate from the hard-gating caps so a legit
+    # kernel is not zeroed merely because its launch count could not be verified.
+    extra: dict[str, Any] = {"op": op, "shape": shape}
+    advisory = bench.get("caps_advisory") or []
+    if advisory:
+        extra["caps_advisory"] = sorted(set(advisory))
+    return grade | extra
 
 
 def to_eval_result(grade_dict: dict):

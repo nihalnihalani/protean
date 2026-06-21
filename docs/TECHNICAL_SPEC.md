@@ -55,7 +55,9 @@ Development split:
 | Split | Shapes |
 |---|---|
 | train | `1024`, `2048`, `4096` |
-| held-out | `1536`, `3072`, `5632` |
+| held-out | `1535`, `3073`, `6143` |
+
+The held-out shapes are deliberately **off the tiling grid** (mod 64 ≠ 0) and prime-adjacent (`3073`, `6143` are prime; `1535 = 5·307`), so a kernel that hardcodes `BLOCK=64/128/256/512` cannot tile them evenly. This closes the G1 moat: passing them requires real boundary masking, not tile-size memorisation.
 
 The sets are asserted disjoint at import time. `splits.py` also contains a future powered held-out sampler for larger evaluation, but the hackathon demo uses the fixed 3+3 dev split.
 
@@ -194,6 +196,12 @@ Spark GB10, HUD demo agent:
 | `elementwise_add_relu` | held-out | 1536 | 0.628 | 2.08x |
 | `rmsnorm` | train | 1024 | 1.211 | 6.40x |
 | `rmsnorm` | held-out | 1536 | 1.255 | 6.97x |
+| `softmax_rows` | train / held-out | — | — | not yet benchmarked |
+
+`softmax_rows` is wired end-to-end (catalog, HUD tasks, optimizer) but has no measured Money-Figure
+numbers yet; the row is left blank until a GPU benchmark is captured. The held-out numbers above were
+measured on shape `1536` and predate the §2 off-grid split update (`1535, 3073, 6143`); they should be
+re-captured on the new off-grid shapes on GPU.
 
 Passing HUD job:
 
@@ -209,10 +217,21 @@ HUD platform deployment:
 
 Powered held-out evaluation:
 
-- artifact: `demo/powered-eval-200.json`
-- `n_tasks=200`
-- `POWERED=True`
-- reports bootstrap confidence interval and sign test for held-out generalization
+- artifact: `demo/powered-eval-200.json` — present and committed (`synthetic=true`, `powered_real=false`,
+  `cuda_unavailable=null`; CPU-generated plumbing/demo, NOT measured GPU numbers). Regenerate with
+  `python scripts/run_powered_eval.py --synthetic --out demo/powered-eval-200.json`.
+- `n_tasks=120`, `n_ops=3`, `POWERED=true` (powered via the hierarchical-bootstrap CI). The synthetic report
+  uses ONLY the 3 ops that actually exist (`splits.REAL_OPS = elementwise_add_relu, rmsnorm, softmax_rows`); it
+  deliberately does NOT invent layernorm/gelu, because the GPU regen command grades the same op list through the
+  real grader and would `ValueError('unknown op: ...')` on a fictional op. (The filename keeps the historical
+  `-200` suffix; 200 is the >=5-op target scale, not the current 3-op count.)
+- reports the hierarchical-bootstrap 95% confidence interval and across-op sign test for held-out generalization
+- REAL (GPU) numbers: `python scripts/run_powered_eval.py --run-dir runs/<optimizer-run> --ops <ops...> --out demo/powered-eval-200.json`
+  on a CUDA box (see `docs/RUNBOOK_POWERED_EVAL.md`); the GPU artifact carries `synthetic=false`, `powered_real`
+  reflecting the real verdict, and `cuda_unavailable=false`.
+- the across-op sign test is advisory until K>=5 ops are wired in (`sign_test_advisory=true` when n_ops<5; at the
+  current K=3 ops, all-positive gives one-sided p=0.125 > 0.05, so the sign test alone can NEVER make
+  `powered=true`); the per-task hierarchical bootstrap CI over the 120 held-out tasks carries the claim in the interim
 
 ## 11. Future Training Spec
 
@@ -223,7 +242,10 @@ The v1 learned layer is a 1,000,005-parameter policy head:
 - output actions: block sizes `128`, `256`, `512`, `1024`, `2048`
 - training signal: `delta_vs_best` from `trials.jsonl`
 
-This is a controller over edit ordering, not a replacement for the coding model. A later 7B LoRA/GRPO run should be compared against this small controller and the deterministic baseline.
+This is a controller over edit ordering, not a replacement for the coding model. It is implemented and
+trains from verifier traces, but has not yet been shown to beat the deterministic baseline (the
+before/after improvement curve is unrun). A later 7B LoRA/GRPO run should be compared against this small
+controller and the deterministic baseline.
 
 ## 12. GRPO Stretch Controls
 

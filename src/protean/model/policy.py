@@ -24,6 +24,7 @@ class CandidateEdit:
     policy: str = "local_deterministic"
     model_cost_usd: float = 0.0
     tokens: int = 0
+    pricing_miss: bool = False
 
 
 def _replace_block_size(source: str, block_size: int) -> str:

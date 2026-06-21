@@ -112,10 +112,70 @@ def load_solution(src: str):
     return module
 
 
+class _TritonLaunchCounter:
+    """Count real Triton kernel launches during a timed window.
+
+    A source-grep for @triton.jit (contains_triton_jit) only proves a kernel was
+    *defined*, not that it was *called*. An LLM can satisfy the grep with a
+    decorative kernel and delegate the real work elsewhere (Dr. Kernel arXiv
+    2602.05885). This hooks Triton's actual launch path so launches_timed
+    reflects real GPU launches; a count of 0 over the timed reps means the
+    @triton.jit kernel was never executed.
+
+    Triton's launch hook API is internal and varies across versions, so this is
+    a best-effort instrument guarded by hasattr. When the hook surface is
+    unavailable, available() returns False and callers fall back to the
+    source-grep heuristic (no behavior change vs. the previous code).
+    """
+
+    def __init__(self) -> None:
+        self.count = 0
+        self._knobs = None
+        self._prev_hook = None
+        self._installed = False
+        if triton is None:
+            return
+        knobs = getattr(getattr(triton, "runtime", None), "knobs", None)
+        runtime_knobs = getattr(knobs, "runtime", None) if knobs is not None else None
+        if runtime_knobs is not None and hasattr(runtime_knobs, "launch_enter_hook"):
+            self._knobs = runtime_knobs
+
+    def available(self) -> bool:
+        return self._knobs is not None
+
+    def _hook(self, *args, **kwargs):
+        self.count += 1
+        if callable(self._prev_hook):
+            return self._prev_hook(*args, **kwargs)
+        return None
+
+    def __enter__(self) -> "_TritonLaunchCounter":
+        if self.available():
+            try:
+                self._prev_hook = self._knobs.launch_enter_hook
+                self._knobs.launch_enter_hook = self._hook
+                self._installed = True
+            except Exception:
+                self._knobs = None
+                self._installed = False
+        return self
+
+    def __exit__(self, *exc) -> None:
+        if self._installed:
+            try:
+                self._knobs.launch_enter_hook = self._prev_hook
+            except Exception:
+                pass
+            self._installed = False
+        return None
+
+
 def _time_cuda(fn, args: tuple[torch.Tensor, ...], reps: int, warmup: int) -> float:
     _require_torch()
     times: list[float] = []
-    flush = torch.empty((16 * 1024 * 1024,), dtype=torch.int8, device="cuda")
+    props = torch.cuda.get_device_properties(torch.cuda.current_device())
+    l2 = getattr(props, "l2_cache_size", 0) or (256 * 1024 * 1024)
+    flush = torch.empty((l2 * 2,), dtype=torch.int8, device="cuda")
 
     for i in range(warmup + reps):
         flush.zero_()
@@ -194,8 +254,27 @@ def bench_source(
     eager_args = make_inputs(n, spec.dtype, seed=43, op=spec.name)
     candidate_args = tuple(t.clone() for t in eager_args)
     t_eager_ms = _time_cuda(eager_fn, eager_args, reps=reps, warmup=warmup)
-    t_kernel_ms = _time_cuda(solution, candidate_args, reps=reps, warmup=warmup)
-    launches_timed = reps if contains_triton_jit(src) else 0
+
+    # Count real Triton launches during the candidate's timed window. If the
+    # runtime hook surface is available we use the measured count (0 means the
+    # @triton.jit kernel was never executed -> hard reward gate via the
+    # no_kernel_launched cap). Otherwise we fall back to the source-grep heuristic
+    # but surface that the launch count is UNVERIFIED via an advisory cap, rather
+    # than silently implying launches occurred. The advisory cap is reported in
+    # caps_advisory (not the reward-gating caps), so it does not zero a legit
+    # kernel on older Triton -- it only makes the unverifiable case auditable.
+    counter = _TritonLaunchCounter()
+    with counter:
+        t_kernel_ms = _time_cuda(solution, candidate_args, reps=reps, warmup=warmup)
+    caps: list[str] = []
+    caps_advisory: list[str] = []
+    if counter.available():
+        launches_timed = int(counter.count)
+        if launches_timed <= 0:
+            caps.append("no_kernel_launched")
+    else:
+        launches_timed = reps if contains_triton_jit(src) else 0
+        caps_advisory.append("launch_count_unverified")
 
     post_inputs = make_inputs(n, spec.dtype, seed=44, op=spec.name)
     out_post = solution(*post_inputs)
@@ -222,4 +301,6 @@ def bench_source(
         "t_kernel_ms": t_kernel_ms,
         "launches_timed": launches_timed,
         "pr_frac": pr_frac,
+        "caps": caps,
+        "caps_advisory": caps_advisory,
     }

@@ -17,7 +17,7 @@ import random
 from collections import defaultdict
 from typing import Callable
 
-from protean.splits import N_OPS, N_HELDOUT_PER_OP, sample_heldout_shape
+from protean.splits import N_OPS, N_HELDOUT_PER_OP, REAL_OPS, sample_heldout_shape
 
 
 # ---- normal quantile (Acklam) for power/MDE math ----
@@ -114,15 +114,19 @@ def evaluate_policy(grade_fn: Callable[[dict], float], tasks: list, rollouts: in
     return out
 
 
-def paired_report(base: dict, trained: dict, B: int = 10000) -> dict:
-    """Money report: paired per-task deltas -> hierarchical bootstrap CI + across-op sign test + power."""
+def paired_report(base: dict, trained: dict, B: int = 10000, boot_seed: int = 0) -> dict:
+    """Money report: paired per-task deltas -> hierarchical bootstrap CI + across-op sign test + power.
+
+    `boot_seed` controls the bootstrap resampling RNG (default 0 preserves prior behavior). Callers that
+    want the CI band to vary with their own seed (e.g. synthetic_powered_report) pass it through here.
+    """
     keys = sorted(set(base) & set(trained))
     by_op = defaultdict(list)
     for (op, idx) in keys:
         by_op[op].append(trained[(op, idx)] - base[(op, idx)])
     per_op = {op: sum(d) / len(d) for op, d in by_op.items()}
     all_d = [v for d in by_op.values() for v in d]
-    boot = hierarchical_bootstrap_ci(by_op, B=B)
+    boot = hierarchical_bootstrap_ci(by_op, B=B, seed=boot_seed)
     sign = across_op_sign_test(per_op)
     n = len(all_d)
     sd = _std(all_d)
@@ -177,8 +181,111 @@ def paired_sources_report(base_sources: dict, trained_sources: dict, n_per_op: i
     base, tasks, base_caps = evaluate_sources(base_sources, n_per_op, reps, warmup, seed)
     trained, _, trained_caps = evaluate_sources(trained_sources, n_per_op, reps, warmup, seed)
     rep = paired_report(base, trained, B=B)
+    rep["synthetic"] = False
     rep["caps_seen"] = sorted(base_caps | trained_caps)
     rep["cuda_unavailable"] = "cuda_unavailable" in rep["caps_seen"]
+    rep["sign_test_advisory"] = rep["n_ops"] < N_OPS  # K<5 -> sign test is advisory; CI carries the claim
+    # A single-op report cannot support a clustering-immune across-op claim (K=1 sign test p=0.5). The CI
+    # may still exclude zero, but we refuse to call a 1-op report "powered_real" because the across-op
+    # generalization design needs >=2 ops. powered_real is the field downstream readers should trust.
+    if rep["n_ops"] < 2:
+        rep["powered_real"] = False
+        rep["powered_real_note"] = ("only 1 op graded — across-op generalization cannot be supported; "
+                                    "powered reflects the single-op CI only, not the moat claim.")
+    else:
+        rep["powered_real"] = bool(rep["powered"]) and not rep["cuda_unavailable"]
+    return rep
+
+
+# ---------------------------------------------------------------------------
+# Optimizer-run bridge: grade SEED-vs-BEST kernels from an optimizer run directory.
+# `run_dir` is produced by protean.optimizer.run_optimization (writes best_kernel_<op>.py per op).
+# GPU-only at run time (delegates to the real grader); the optimizer can call this for final reporting.
+# ---------------------------------------------------------------------------
+def powered_eval_from_run_dir(run_dir, ops: list, n_per_op: int = N_HELDOUT_PER_OP,
+                              reps: int = 50, warmup: int = 10, seed: int = 0, B: int = 10000) -> dict:
+    """Powered base(seed)-vs-trained(best) report using kernels from an optimizer run dir.
+
+    For each op, base = protean.kernels.seed_kernel_for(op); trained = run_dir/best_kernel_<op>.py
+    if present, else the seed (so a seed-only dir yields Gap≈0, a valid sanity check). GPU-only.
+
+    `ops` must be a subset of splits.REAL_OPS (the implemented ops). This is validated up-front so a
+    fictional op raises a clear ValueError here rather than deep inside the grader.
+    """
+    from pathlib import Path
+
+    from protean.kernels import seed_kernel_for
+
+    unknown = [op for op in ops if op not in REAL_OPS]
+    if unknown:
+        raise ValueError(f"unknown op(s) for powered eval: {unknown}; implemented ops are {list(REAL_OPS)}")
+    run = Path(run_dir)
+    base_sources, trained_sources = {}, {}
+    for op in ops:
+        base_sources[op] = seed_kernel_for(op)
+        best = run / f"best_kernel_{op}.py"
+        trained_sources[op] = best.read_text() if best.exists() else seed_kernel_for(op)
+    rep = paired_sources_report(base_sources, trained_sources, n_per_op=n_per_op,
+                                reps=reps, warmup=warmup, seed=seed, B=B)
+    rep["run_dir"] = str(run)
+    rep["ops"] = list(ops)
+    return rep
+
+
+# ---------------------------------------------------------------------------
+# CPU-safe SYNTHETIC powered report. Lets the demo artifact (demo/powered-eval-200.json)
+# and TECHNICAL_SPEC §10 exist WITHOUT a GPU, while being unmistakably labeled synthetic=True.
+# Deterministic given `seed`; uses the SAME paired_report machinery as the real path, so the
+# statistical shape (n=200, hierarchical bootstrap CI, across-op sign test) is identical.
+# ---------------------------------------------------------------------------
+def synthetic_powered_report(ops: list | None = None, effect: float = 0.22, base_level: float = 0.45,
+                             op_spread: float = 0.10, noise: float = 0.20, rollouts: int = 8,
+                             seed: int = 1234, B: int = 10000) -> dict:
+    """Build a fully-shaped, deterministic powered report from a synthetic effect (NO grader / NO GPU).
+
+    Models a plausible base-vs-trained improvement (mean per-task delta ~ `effect` reward units) with
+    per-op offsets and within-task noise, then runs it through the real paired_report. The result is
+    labeled synthetic=True so it can never be mistaken for measured GPU numbers.
+
+    Defaults to the ops that ACTUALLY EXIST (splits.REAL_OPS = 3 ops). It deliberately does NOT invent
+    ops like layernorm/gelu: the GPU regen command (scripts/run_powered_eval.py --run-dir ...) grades the
+    same op list through the real grader, which would raise ValueError('unknown op: ...') on a fictional
+    op. With K=3 real ops the across-op sign test is auxiliary (best one-sided p=0.125 > 0.05, so it can
+    never by itself make powered=True); the per-task continuous hierarchical bootstrap CI over the 200
+    held-out tasks carries the power. `sign_test_advisory` is therefore True for the real-op artifact.
+
+    Honest labeling of fields:
+      * synthetic=True            -> these are NOT measured numbers.
+      * powered_real=False        -> a synthetic report is NEVER a real powered result, regardless of CI.
+      * cuda_unavailable=None     -> inapplicable; no CUDA path was exercised (vs. False which would
+                                     wrongly imply a GPU was present and used).
+      * powered                   -> the honest statistical verdict on the SYNTHETIC data (CI excludes 0
+                                     or sign-test p<=0.05); paired with powered_real=False it can never be
+                                     misread as a real claim.
+    The seed threads through to the bootstrap CI (boot_seed=seed), so different seeds give different CI
+    bands; calling twice with the same seed is byte-for-byte reproducible.
+    """
+    if ops is None:
+        ops = list(REAL_OPS)
+    rng = random.Random(seed)
+    tasks = build_eval_set(ops, seed=0)
+    off = {op: rng.gauss(0, op_spread) for op in ops}
+    base = evaluate_policy(
+        lambda t: max(0.0, base_level + off[t["op"]] + rng.gauss(0, noise)), tasks, rollouts=rollouts)
+    trained = evaluate_policy(
+        lambda t: max(0.0, base_level + effect + off[t["op"]] + rng.gauss(0, noise)), tasks, rollouts=rollouts)
+    rep = paired_report(base, trained, B=B, boot_seed=seed)
+    rep["synthetic"] = True
+    rep["powered_real"] = False  # a synthetic report is never a real powered result
+    rep["synthetic_params"] = {"effect": effect, "base_level": base_level, "op_spread": op_spread,
+                              "noise": noise, "rollouts": rollouts, "seed": seed}
+    rep["ops"] = list(ops)
+    rep["caps_seen"] = []
+    rep["cuda_unavailable"] = None  # inapplicable for a synthetic (no-GPU) report
+    rep["sign_test_advisory"] = rep["n_ops"] < N_OPS
+    rep["note"] = ("SYNTHETIC artifact for plumbing/demo only — NOT measured GPU results "
+                   "(powered_real=false). Reproduce real numbers with scripts/run_powered_eval.py "
+                   "--run-dir <optimizer-run> on a GPU box; it grades the SAME real ops via the grader.")
     return rep
 
 

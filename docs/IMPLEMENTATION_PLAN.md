@@ -171,7 +171,7 @@ Only after the above is stable:
 3. Add more ops.
 4. Add GRPO/LoRA training.
 5. Compare deterministic, Fireworks, learned-policy, and trained-agent curves.
-6. Keep `demo/powered-eval-200.json` current as the statistical held-out moat artifact.
+6. `demo/powered-eval-200.json` exists as a synthetic CPU demo (`synthetic=true`); produce the real GPU version via `scripts/run_powered_eval.py` on CUDA and keep it current as the statistical held-out moat artifact.
 
 ## Do Not Do Yet
 

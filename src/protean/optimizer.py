@@ -98,6 +98,8 @@ def run_optimization(
     hud_job_name: str | None = None,
     hud_group: int = 1,
     hud_session=None,
+    powered_eval: bool = False,
+    powered_eval_n_per_op: int = 40,
 ) -> dict:
     out = Path(out_dir)
     out.mkdir(parents=True, exist_ok=True)
@@ -119,6 +121,9 @@ def run_optimization(
     seed_path.write_text(seed_source)
     trial_count = 0
     accepted_count = 0
+    total_model_cost_usd = 0.0
+    total_tokens = 0
+    pricing_misses = 0
     if stream_hud and hud_session is None:
         from protean.hud_stream import start_hud_stream_session
 
@@ -167,6 +172,11 @@ def run_optimization(
                 edits = local_kernel_edits(best_source)
             for edit in edits:
                 trial_count += 1
+                total_model_cost_usd += float(edit.model_cost_usd)
+                total_tokens += int(edit.tokens)
+                edit_pricing_miss = bool(getattr(edit, "pricing_miss", False))
+                if edit_pricing_miss:
+                    pricing_misses += 1
                 candidate_path = candidate_dir / f"{trial_count:04d}_{edit.name}.py"
                 candidate_path.write_text(edit.source)
                 before_score = best_score
@@ -241,6 +251,7 @@ def run_optimization(
                             "source_path": str(candidate_path),
                             "model_cost_usd": edit.model_cost_usd,
                             "tokens": edit.tokens,
+                            "pricing_miss": edit_pricing_miss,
                             "controller_decision": trial_controller_decision,
                             "best_score_before": before_score,
                             "best_summary_before": before_summary,
@@ -264,6 +275,9 @@ def run_optimization(
         "log": str(log_path),
         "trials": trial_count,
         "accepted": accepted_count,
+        "total_model_cost_usd": round(total_model_cost_usd, 8),
+        "total_tokens": total_tokens,
+        "pricing_misses": pricing_misses,
         "elapsed_sec": round(time.time() - started, 6),
         "policy_path": str(policy_path) if policy_path is not None else None,
         "controller_path": str(controller_path) if controller_path is not None else None,
@@ -274,5 +288,19 @@ def run_optimization(
         "hud_job_name": hud_session.name if hud_session is not None else None,
         "hud_group": hud_group if stream_hud else None,
     }
+
+    # Optional final reporting step: powered base(seed)-vs-trained(best) held-out eval (GPU).
+    # Off by default so the CPU test suite never touches the grader's CUDA path.
+    if powered_eval:
+        from protean.eval_protocol import powered_eval_from_run_dir
+
+        powered_path = out / "powered-eval.json"
+        try:
+            powered = powered_eval_from_run_dir(out, [op], n_per_op=powered_eval_n_per_op)
+        except Exception as exc:  # noqa: BLE001 - reporting must not fail the run
+            powered = {"powered_eval_error": {"type": type(exc).__name__, "message": str(exc)}}
+        powered_path.write_text(json.dumps(powered, indent=2, sort_keys=True, default=str) + "\n")
+        final["powered_eval"] = str(powered_path)
+
     summary_path.write_text(json.dumps(final, indent=2, sort_keys=True) + "\n")
     return final

@@ -12,15 +12,15 @@ Protean turns GPU-kernel optimization into a HUD task where every submitted kern
 
 | Area | Status | Evidence |
 |---|---|---|
-| GPU verifier | Working on Spark GB10 | `49 passed, 1 skipped`, smoke verifier correct on all public ops |
+| GPU verifier | Working on Spark GB10 | `123 passed, 3 skipped` (CPU), smoke verifier correct on all public ops |
 | HUD dashboard | Working as eval control plane | Stable tasks, one-job optimizer streaming, grouped rollouts |
 | Ops | `elementwise_add_relu`, `rmsnorm`, `softmax_rows` | PyTorch reference + hand Triton kernel for each |
-| Held-out split | Working | Train: `1024, 2048, 4096`; held-out: `1536, 3072, 5632` |
+| Held-out split | Working | Train: `1024, 2048, 4096`; held-out (off-grid): `1535, 3073, 6143` |
 | Anti-hack checks | Working | PyTorch passthrough, no-launch, bad-shape score zero |
 | Optimizer loop | Working | Saves candidates, logs trials, accepts only strict improvements |
 | HUD trial streaming | Working | Optional `--stream-hud` streams every trial into one HUD job/session |
 | Fireworks backend | Wired | JSON mode, low reasoning, crash-safe logging, HUD streaming ready |
-| Learned controller | Implemented as v1 1M policy head | Trains from verifier traces |
+| Learned controller | Implemented as v1 1M policy head; not yet shown to beat the deterministic baseline | Trains from verifier traces; before/after improvement curve unrun |
 
 ## Money Figure
 
@@ -32,6 +32,13 @@ Spark GB10, HUD demo agent, known-good Triton kernels, same HUD grader:
 | `elementwise_add_relu` | held-out | 1536 | 0.628 | true | 2.08x |
 | `rmsnorm` | train | 1024 | 1.211 | true | 6.40x |
 | `rmsnorm` | held-out | 1536 | 1.255 | true | 6.97x |
+| `softmax_rows` | train / held-out | — | — | — | not yet benchmarked |
+
+`softmax_rows` is fully integrated (catalog, HUD tasks, optimizer) but does not yet have measured
+Money-Figure numbers, so it is intentionally left blank above until a GPU benchmark is captured.
+
+The held-out numbers above were measured on shape `1536`; they predate the G1 off-grid split update
+(held-out is now `1535, 3073, 6143`) and should be re-captured on the new off-grid shapes on GPU.
 
 The important part is not that these are final state-of-the-art kernels. The important part is that HUD is grading real Triton code with the same verifier Protean uses locally.
 
@@ -206,7 +213,7 @@ HUD-facing reward is normalized to `0..1`. The raw Protean reward remains in `in
 | [Requested HUD taskset](https://hud.ai/tasksets/6d2feb10-b23c-4928-a1f9-e8b53db364d7) | Earlier public taskset URL supplied for the demo |
 | [HUD all-ops grouped live job](https://hud.ai/jobs/3eda0cb665df40f6a3f25a89460819ae) | Spark `group=2` live optimizer run across all three ops |
 | [HUD trace smoke job](https://hud.ai/jobs/53014ddee1c34b60b229e700532793d3) | One-op real trace smoke with no HUD auth errors |
-| `demo/powered-eval-200.json` | 200-task powered eval artifact with bootstrap CI and sign test |
+| `demo/powered-eval-200.json` | Powered eval artifact (bootstrap CI + across-op sign test) over the 3 real ops (`n_ops=3`, `n_tasks=120`) — `synthetic=true`, `powered_real=false`, `cuda_unavailable=null` (CPU-generated plumbing/demo, NOT measured GPU numbers, and never invents layernorm/gelu so the GPU regen cannot crash). Regenerate the real GPU version with `scripts/run_powered_eval.py --run-dir <run>` on CUDA. The `-200` suffix is the >=5-op target scale, not the current count |
 | [HUD control-plane smoke job](https://hud.ai/jobs/4e03f95d8eb440989758d9b6d37dc183) | One Spark optimizer run streamed five trials into one grouped HUD job |
 | [HUD passing demo job](https://hud.ai/jobs/5a3ddc3f24a748d9abda38866bccb503) | Shows speed-sensitive non-zero reward in HUD dashboard |
 | [HUD generic-agent integration job](https://hud.ai/jobs/22314aa9438c4d41bb98edeadea29913) | Shows standard HUD eval path with a weak one-step agent |

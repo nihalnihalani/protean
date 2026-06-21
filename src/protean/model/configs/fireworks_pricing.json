@@ -1,0 +1,11 @@
+{
+  "accounts/fireworks/models/gpt-oss-120b": {
+    "input_usd_per_million": 0.15,
+    "output_usd_per_million": 0.60,
+    "cached_input_usd_per_million": 0.01
+  },
+  "accounts/fireworks/models/gpt-oss-20b": {
+    "input_usd_per_million": 0.07,
+    "output_usd_per_million": 0.30
+  }
+}

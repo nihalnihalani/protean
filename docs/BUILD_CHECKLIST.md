@@ -17,7 +17,7 @@ python scripts/check_redteam.py
 Expected current local result:
 
 ```text
-49 passed, 1 skipped
+123 passed, 3 skipped
 ```
 
 ## Spark GPU Checks
