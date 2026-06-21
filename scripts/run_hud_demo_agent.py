@@ -12,6 +12,7 @@ import argparse
 import asyncio
 import json
 import os
+import re
 import sys
 from pathlib import Path
 
@@ -23,14 +24,26 @@ from hud.eval import LocalRuntime, Taskset
 from hud.types import Step
 
 from protean.kernels import seed_kernel_for
+from protean.task_catalog import OPS, OPS_BY_NAME
+
+
+def _op_from_prompt(prompt: str) -> str:
+    lowered = prompt.lower()
+    match = re.search(r"^\s*-\s*op:\s*([a-z0-9_]+)\s*$", lowered, re.MULTILINE)
+    if match and match.group(1) in OPS_BY_NAME:
+        return match.group(1)
+    for spec in sorted(OPS, key=lambda item: len(item.name), reverse=True):
+        if spec.name in lowered:
+            return spec.name
+    return "elementwise_add_relu"
 
 
 class ProteanDemoAgent(Agent):
     """Submit the correct hand-optimized kernel for the prompted op."""
 
     async def __call__(self, run) -> None:
-        prompt = (run.prompt_text or "").lower()
-        op = "rmsnorm" if "rmsnorm" in prompt else "elementwise_add_relu"
+        prompt = run.prompt_text or ""
+        op = _op_from_prompt(prompt)
         answer = seed_kernel_for(op)
         run.trace.content = answer
         run.trace.extra["agent"] = "protean_demo_agent"
@@ -39,10 +52,11 @@ class ProteanDemoAgent(Agent):
 
 
 async def _run(args: argparse.Namespace) -> int:
-    taskset = Taskset.from_file(args.source)
+    taskset = Taskset.from_api(args.taskset) if args.taskset else Taskset.from_file(args.source)
     job = await taskset.run(
         ProteanDemoAgent(),
         runtime=LocalRuntime(args.source),
+        group=args.group,
         max_concurrent=args.max_concurrent,
         rollout_timeout=args.rollout_timeout,
     )
@@ -74,6 +88,8 @@ async def _run(args: argparse.Namespace) -> int:
     payload = {
         "job_id": job.id,
         "job_url": f"https://hud.ai/jobs/{job.id}",
+        "taskset": args.taskset,
+        "taskset_id": taskset.api_id,
         "mean_reward": job.reward,
         "runs": rows,
     }
@@ -94,7 +110,9 @@ async def _run(args: argparse.Namespace) -> int:
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--source", default="src/protean/env.py")
+    parser.add_argument("--taskset", help="HUD taskset slug or id to attach this eval job to.")
     parser.add_argument("--out", default="demo/hud-demo-agent-results.json")
+    parser.add_argument("--group", type=int, default=1)
     parser.add_argument("--max-concurrent", type=int, default=1)
     parser.add_argument("--rollout-timeout", type=float, default=120.0)
     args = parser.parse_args()

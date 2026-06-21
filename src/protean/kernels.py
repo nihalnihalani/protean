@@ -198,7 +198,11 @@ def _quant_dequant_kernel(x_ptr, out_ptr, n_elements: tl.constexpr, block_size: 
     mask = offsets < n_elements
     x = tl.load(x_ptr + offsets, mask=mask, other=0.0).to(tl.float32)
     scaled = x / scale
-    rounded = tl.where(scaled >= 0.0, tl.floor(scaled + 0.5), tl.ceil(scaled - 0.5))
+    lower = tl.floor(scaled)
+    frac = scaled - lower
+    lower_is_odd = (lower - 2.0 * tl.floor(lower * 0.5)) != 0.0
+    round_up = (frac > 0.5) | ((frac == 0.5) & lower_is_odd)
+    rounded = tl.where(round_up, lower + 1.0, lower)
     clipped = tl.minimum(tl.maximum(rounded, -127.0), 127.0)
     tl.store(out_ptr + offsets, clipped * scale, mask=mask)
 
