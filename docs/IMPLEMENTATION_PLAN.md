@@ -18,7 +18,7 @@ For the hackathon, the proof is smaller:
 
 Status: implemented and verified.
 
-- Two ops: `elementwise_add_relu`, `rmsnorm`.
+- Three public ops: `elementwise_add_relu`, `rmsnorm`, `softmax_rows`.
 - PyTorch eager reference for each op.
 - Known-good hand-written Triton implementation for each op.
 - Fresh random inputs for correctness.
@@ -34,13 +34,14 @@ python -m pytest -q
 python scripts/check_redteam.py
 python scripts/smoke_verifier.py --op elementwise_add_relu
 python scripts/smoke_verifier.py --op rmsnorm
+python scripts/smoke_verifier.py --op softmax_rows
 ```
 
 ## Layer 2: HUD Proof
 
 Status: implemented and verified.
 
-The HUD wrapper exposes four tasks and calls the direct Protean grader. The deterministic demo agent submits known-good kernels so the dashboard shows the verifier working, not the randomness of a weak one-step generic model.
+The HUD wrapper exposes six tasks and calls the direct Protean grader. The deterministic demo agent submits known-good kernels so the dashboard shows the verifier working, not the randomness of a weak one-step generic model.
 
 Passing job:
 
@@ -87,7 +88,7 @@ Status: implemented.
 - Stable task rows expose the Protean benchmark to HUD.
 - One optimizer run maps to one HUD job.
 - Each candidate creates HUD traces for train and held-out tasks.
-- Trace steps show model response, saved candidate, AST check, compile status, correctness, timing, reward, and accept/reject.
+- Trace steps show model response, 1M controller decision when available, saved candidate, AST check, compile status, correctness, timing, reward, and accept/reject.
 - HUD rewards/subscores are normalized to `0..1`.
 - Raw Protean reward remains in `info.protean_reward_raw` and `trials.jsonl`.
 - `--hud-group N` repeats each task to measure reward spread for trainability.
@@ -99,12 +100,18 @@ hud deploy . --no-env
 hud sync tasks protean-kernel-optimizer src/protean/env.py --yes
 hud eval protean-kernel-optimizer claude --full --group 3 --max-concurrent 4
 python scripts/run_optimizer.py --op elementwise_add_relu --max-rounds 1 --stream-hud --hud-group 3
+python scripts/run_hud_optimizer_agent.py --policy local --all-ops --max-rounds 1 --group 2 --job-name protean-live-fallback
 ```
+
+Use `hud set HUD_API_KEY=...` or `export HUD_API_KEY=...`; do not source the project `.env`.
 
 Verified platform artifacts:
 
-- environment: https://hud.ai/environments/9907b272-ef58-4f57-9cd3-5dbcb37dd51e
-- taskset: https://hud.ai/tasksets/6d2feb10-b23c-4928-a1f9-e8b53db364d7
+- requested environment: https://hud.ai/environments/9907b272-ef58-4f57-9cd3-5dbcb37dd51e
+- requested taskset: https://hud.ai/tasksets/6d2feb10-b23c-4928-a1f9-e8b53db364d7
+- active verified environment: https://hud.ai/environments/32bb1f0c-0737-4a58-8a5e-5c9ec8a2f01b
+- active verified taskset: https://hud.ai/tasksets/3f2d2423-72d4-4541-bb18-b78e31151676
+- active all-ops grouped live job: https://hud.ai/jobs/3eda0cb665df40f6a3f25a89460819ae
 
 ## Layer 4: Model-Backed Edits
 
@@ -135,6 +142,7 @@ Next run:
 export FIREWORKS_API_KEY=...
 export HUD_API_KEY=...
 python scripts/run_optimizer.py --edit-policy fireworks --all-ops --max-rounds 20 --stream-hud --hud-job-name protean-fireworks-overnight --out-dir runs/protean-fireworks-overnight
+python scripts/run_hud_optimizer_agent.py --policy fireworks --controller outputs/policy_head.pt --all-ops --max-rounds 50 --group 4 --job-name protean-live-kernel-optimizer
 ```
 
 ## Layer 5: Learned Policy Head
@@ -163,6 +171,7 @@ Only after the above is stable:
 3. Add more ops.
 4. Add GRPO/LoRA training.
 5. Compare deterministic, Fireworks, learned-policy, and trained-agent curves.
+6. Keep `demo/powered-eval-200.json` current as the statistical held-out moat artifact.
 
 ## Do Not Do Yet
 

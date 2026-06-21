@@ -35,18 +35,63 @@ def _task_slugs_for_op(op: str) -> list[str]:
     return [f"{op}_train", f"{op}_held_out"]
 
 
-def _ensure_hud_api_key() -> None:
-    if os.environ.get("HUD_API_KEY"):
-        return
+def _read_hud_user_env(path: Path | None = None) -> str | None:
+    """Read HUD_API_KEY from the HUD CLI user config without sourcing shell."""
+
+    hud_env = path or (Path.home() / ".hud" / ".env")
+    if not hud_env.exists():
+        return None
+    for line in hud_env.read_text().splitlines():
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#") or "=" not in stripped:
+            continue
+        key, value = stripped.split("=", 1)
+        if key.strip() != "HUD_API_KEY":
+            continue
+        value = value.strip().strip('"').strip("'")
+        return value or None
+    return None
+
+
+def _sync_hud_settings(api_key: str) -> None:
     try:
         from hud.settings import settings
     except Exception:
-        settings = None
-    key = getattr(settings, "api_key", None) if settings is not None else None
-    if key:
-        os.environ["HUD_API_KEY"] = key
         return
-    raise HudStreamError("HUD_API_KEY is required to stream optimizer trials to HUD")
+    try:
+        settings.api_key = api_key
+    except Exception:
+        # Some HUD builds may make settings immutable. The process env fallback
+        # still covers new API clients created after this point.
+        pass
+
+
+def resolve_hud_api_key() -> str:
+    """Resolve and propagate HUD auth for CLI, SDK settings, and API clients."""
+
+    key = os.environ.get("HUD_API_KEY")
+    if not key:
+        try:
+            from hud.settings import settings
+        except Exception:
+            settings = None
+        key = getattr(settings, "api_key", None) if settings is not None else None
+    if not key:
+        key = _read_hud_user_env()
+    if not key:
+        raise HudStreamError("HUD_API_KEY is required to stream optimizer trials to HUD")
+
+    os.environ["HUD_API_KEY"] = key
+    _sync_hud_settings(key)
+    return key
+
+
+def assert_hud_auth() -> None:
+    """Fail before GPU work if HUD auth is not available."""
+
+    key = resolve_hud_api_key()
+    if not key.strip():
+        raise HudStreamError("HUD_API_KEY is empty")
 
 
 def _summary_metrics(summary: dict[str, Any], eval_error: dict[str, Any] | None) -> dict[str, Any]:
@@ -97,8 +142,10 @@ def _row_from_run(slug: str, run: Any) -> dict[str, Any]:
 
 
 async def _start_session_async(name: str, group: int) -> HudStreamSession:
+    assert_hud_auth()
     from hud.eval import Job
 
+    assert_hud_auth()
     job = await Job.start(name, group=group)
     return HudStreamSession(job=job, name=name, group=group)
 
@@ -106,7 +153,7 @@ async def _start_session_async(name: str, group: int) -> HudStreamSession:
 def start_hud_stream_session(*, name: str | None = None, group: int = 1) -> HudStreamSession:
     """Create one HUD job for a whole optimizer run."""
 
-    _ensure_hud_api_key()
+    assert_hud_auth()
     job_name = name or f"protean-optimizer-{int(time.time())}"
     return asyncio.run(_start_session_async(job_name, group))
 
@@ -121,6 +168,7 @@ async def _stream_candidate_async(
     reason: str,
     tokens: int,
     model_cost_usd: float,
+    controller_decision: dict[str, Any] | None,
     source_path: str,
     summary: dict[str, Any],
     eval_error: dict[str, Any] | None,
@@ -130,10 +178,12 @@ async def _stream_candidate_async(
     session: HudStreamSession | None,
     group: int,
 ) -> dict[str, Any]:
+    assert_hud_auth()
     from hud.agents.base import Agent
     from hud.eval import LocalRuntime, Taskset
     from hud.types import Step
 
+    assert_hud_auth()
     metrics = _summary_metrics(summary, eval_error)
 
     class CandidateAgent(Agent):
@@ -147,6 +197,7 @@ async def _stream_candidate_async(
                     "policy": policy,
                     "tokens": tokens,
                     "model_cost_usd": model_cost_usd,
+                    "controller_decision": controller_decision,
                     "accepted": accepted,
                     "source_path": source_path,
                     "compile_success": metrics["compile_success"],
@@ -176,6 +227,7 @@ async def _stream_candidate_async(
                         "reason": reason,
                         "tokens": tokens,
                         "model_cost_usd": model_cost_usd,
+                        "controller_decision": controller_decision,
                         "answer_bytes": len(source),
                     },
                 )
@@ -257,6 +309,7 @@ async def _stream_candidate_async(
             )
 
     taskset = Taskset.from_file(env_source).filter(_task_slugs_for_op(op))
+    assert_hud_auth()
     start_run_count = len(session.job.runs) if session is not None else 0
     job = await taskset.run(
         CandidateAgent(),
@@ -292,6 +345,7 @@ def stream_candidate_to_hud(
     reason: str = "",
     tokens: int = 0,
     model_cost_usd: float = 0.0,
+    controller_decision: dict[str, Any] | None = None,
     source_path: str = "",
     summary: dict[str, Any] | None = None,
     eval_error: dict[str, Any] | None = None,
@@ -302,7 +356,7 @@ def stream_candidate_to_hud(
 ) -> dict[str, Any]:
     """Stream one optimizer trial candidate into HUD."""
 
-    _ensure_hud_api_key()
+    assert_hud_auth()
     env_path = Path(env_source)
     if not env_path.exists():
         raise HudStreamError(f"HUD env source does not exist: {env_path}")
@@ -316,6 +370,7 @@ def stream_candidate_to_hud(
             reason=reason,
             tokens=tokens,
             model_cost_usd=model_cost_usd,
+            controller_decision=controller_decision,
             source_path=source_path,
             summary=summary or {},
             eval_error=eval_error,

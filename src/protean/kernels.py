@@ -58,6 +58,38 @@ def solution(x, weight):
 '''
 
 
+HAND_OPTIMIZED_SOFTMAX_ROWS = r'''
+import torch
+import triton
+import triton.language as tl
+
+
+@triton.jit
+def _softmax_rows_kernel(x_ptr, out_ptr, n_cols: tl.constexpr, block_size: tl.constexpr):
+    row = tl.program_id(0)
+    offsets = tl.arange(0, block_size)
+    mask = offsets < n_cols
+    values = tl.load(x_ptr + row * n_cols + offsets, mask=mask, other=-float("inf")).to(tl.float32)
+    values = values - tl.max(values, axis=0)
+    numerator = tl.exp(values)
+    denominator = tl.sum(numerator, axis=0)
+    out = numerator / denominator
+    tl.store(out_ptr + row * n_cols + offsets, out, mask=mask)
+
+
+def _next_power_of_2(n):
+    return 1 << (n - 1).bit_length()
+
+
+def solution(x):
+    out = torch.empty_like(x)
+    n_rows, n_cols = x.shape
+    block_size = _next_power_of_2(n_cols)
+    _softmax_rows_kernel[(n_rows,)](x, out, n_cols, block_size=block_size)
+    return out
+'''
+
+
 PYTORCH_PASSTHROUGH = r'''
 import torch
 
@@ -107,6 +139,7 @@ def solution(x, y):
 SEED_KERNELS = {
     "elementwise_add_relu": HAND_OPTIMIZED_ELEMENTWISE_ADD_RELU,
     "rmsnorm": HAND_OPTIMIZED_RMSNORM,
+    "softmax_rows": HAND_OPTIMIZED_SOFTMAX_ROWS,
 }
 
 

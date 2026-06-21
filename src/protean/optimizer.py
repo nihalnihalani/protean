@@ -14,6 +14,7 @@ from protean.grader import grade_source
 from protean.kernels import HAND_OPTIMIZED_ELEMENTWISE_ADD_RELU, seed_kernel_for
 from protean.model.policy import learned_kernel_edits, local_kernel_edits
 from protean.model.rl_layer import accept_candidate, score, score_delta
+from protean.model.tiny_policy import ACTION_BLOCK_SIZES, TinyPolicyHead, state_features
 from protean.splits import HELD_OUT_SHAPES, TRAIN_SHAPES
 
 
@@ -52,12 +53,42 @@ def failed_evaluation_summary(exc: Exception) -> dict:
     }
 
 
+def controller_decision(summary: dict, controller_path: str | Path | None) -> dict | None:
+    """Return the 1M policy-head decision for trace/HUD metadata if available."""
+
+    if controller_path is None:
+        return None
+    path = Path(controller_path)
+    if not path.exists():
+        return {
+            "controller": str(path),
+            "available": False,
+            "reason": "controller file not found",
+        }
+    policy = TinyPolicyHead.load(path)
+    ranked = policy.ranked_actions(state_features(summary))
+    return {
+        "controller": str(path),
+        "available": True,
+        "parameter_count": policy.parameter_count,
+        "ranked_actions": [
+            {
+                "action": int(action),
+                "edit": f"block_size_{ACTION_BLOCK_SIZES[action]}",
+                "block_size": ACTION_BLOCK_SIZES[action],
+            }
+            for action in ranked
+        ],
+    }
+
+
 def run_optimization(
     *,
     out_dir: str | Path = "runs/protean-overnight",
     max_rounds: int = 1,
     seed_source: str | None = None,
     policy_path: str | Path | None = None,
+    controller_path: str | Path | None = None,
     edit_policy: str = "local",
     op: str = "elementwise_add_relu",
     fireworks_model: str | None = None,
@@ -116,6 +147,7 @@ def run_optimization(
         )
 
         for round_idx in range(max_rounds):
+            trial_controller_decision = controller_decision(best_summary, controller_path)
             if edit_policy == "fireworks":
                 from protean.model.fireworks_policy import DEFAULT_FIREWORKS_MODEL, fireworks_kernel_edit
 
@@ -178,6 +210,7 @@ def run_optimization(
                             reason=edit.reason,
                             tokens=edit.tokens,
                             model_cost_usd=edit.model_cost_usd,
+                            controller_decision=trial_controller_decision,
                             source_path=str(candidate_path),
                             summary=candidate_summary,
                             eval_error=eval_error,
@@ -208,6 +241,7 @@ def run_optimization(
                             "source_path": str(candidate_path),
                             "model_cost_usd": edit.model_cost_usd,
                             "tokens": edit.tokens,
+                            "controller_decision": trial_controller_decision,
                             "best_score_before": before_score,
                             "best_summary_before": before_summary,
                             "score": candidate_score,
@@ -232,6 +266,7 @@ def run_optimization(
         "accepted": accepted_count,
         "elapsed_sec": round(time.time() - started, 6),
         "policy_path": str(policy_path) if policy_path is not None else None,
+        "controller_path": str(controller_path) if controller_path is not None else None,
         "edit_policy": edit_policy,
         "op": op,
         "stream_hud": stream_hud,

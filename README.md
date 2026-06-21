@@ -12,9 +12,9 @@ Protean turns GPU-kernel optimization into a HUD task where every submitted kern
 
 | Area | Status | Evidence |
 |---|---|---|
-| GPU verifier | Working on Spark GB10 | `49 passed, 1 skipped`, smoke verifier correct on both ops |
+| GPU verifier | Working on Spark GB10 | `49 passed, 1 skipped`, smoke verifier correct on all public ops |
 | HUD dashboard | Working as eval control plane | Stable tasks, one-job optimizer streaming, grouped rollouts |
-| Ops | `elementwise_add_relu`, `rmsnorm` | Both have PyTorch reference + hand Triton kernel |
+| Ops | `elementwise_add_relu`, `rmsnorm`, `softmax_rows` | PyTorch reference + hand Triton kernel for each |
 | Held-out split | Working | Train: `1024, 2048, 4096`; held-out: `1536, 3072, 5632` |
 | Anti-hack checks | Working | PyTorch passthrough, no-launch, bad-shape score zero |
 | Optimizer loop | Working | Saves candidates, logs trials, accepts only strict improvements |
@@ -106,7 +106,6 @@ python scripts/run_optimizer.py --all-ops --max-rounds 1
 Stream every optimizer trial to one HUD job:
 
 ```bash
-export HUD_API_KEY=...
 python scripts/run_optimizer.py \
   --edit-policy local \
   --op elementwise_add_relu \
@@ -115,12 +114,13 @@ python scripts/run_optimizer.py \
   --hud-job-name protean-smoke
 ```
 
+HUD auth can come from `export HUD_API_KEY=...` or `hud set HUD_API_KEY=...`. Do not `source .env`; the project `.env` may contain non-shell-safe notes.
+
 This opens one HUD job for the optimizer run, then records each candidate as HUD traces under that job. The local `trials.jsonl` stays the continuous audit log, and each trial row records either `hud_stream.job_url` or `hud_stream_error`.
 
 Measure reward spread for trainability:
 
 ```bash
-export HUD_API_KEY=...
 python scripts/run_optimizer.py \
   --edit-policy local \
   --op elementwise_add_relu \
@@ -133,23 +133,33 @@ python scripts/run_optimizer.py \
 Run the HUD passing demo:
 
 ```bash
-export HUD_API_KEY=...
 PYTHONPATH=src hud task list --source src/protean/env.py
 PYTHONPATH=src python scripts/run_hud_demo_agent.py
 PYTHONPATH=src python scripts/verify_hud.py
 ```
 
-Use Fireworks for model-generated edits:
+Use Fireworks plus the 1M controller trace layer for the live optimizer demo:
 
 ```bash
 export FIREWORKS_API_KEY=...
-export HUD_API_KEY=...
-python scripts/run_optimizer.py \
-  --edit-policy fireworks \
+python scripts/run_hud_optimizer_agent.py \
+  --policy fireworks \
+  --controller outputs/policy_head.pt \
   --all-ops \
   --max-rounds 50 \
-  --stream-hud \
-  --hud-job-name protean-overnight
+  --group 4 \
+  --job-name protean-live-kernel-optimizer
+```
+
+If Fireworks is unavailable, use the deterministic fallback:
+
+```bash
+python scripts/run_hud_optimizer_agent.py \
+  --policy local \
+  --all-ops \
+  --max-rounds 1 \
+  --group 2 \
+  --job-name protean-live-fallback
 ```
 
 Sync Protean's taskset to HUD:
@@ -168,6 +178,8 @@ hud eval protean-kernel-optimizer claude --full --group 3 --max-concurrent 4
 | `elementwise_add_relu_held_out` | `elementwise_add_relu` | held-out | 1536 |
 | `rmsnorm_train` | `rmsnorm` | train | 1024 |
 | `rmsnorm_held_out` | `rmsnorm` | held-out | 1536 |
+| `softmax_rows_train` | `softmax_rows` | train | 1024 |
+| `softmax_rows_held_out` | `softmax_rows` | held-out | 1536 |
 
 ## HUD Control Plane
 
@@ -175,9 +187,9 @@ Protean uses HUD as the public eval/training control plane:
 
 | HUD surface | Protean usage |
 |---|---|
-| Tasksets | Four stable task rows: two ops times train/held-out |
+| Tasksets | Six stable task rows: three ops times train/held-out |
 | Jobs | One optimizer run opens one HUD job/session |
-| Traces | Every candidate records model response, saved file, AST check, compile status, correctness, timing, reward, and accept/reject |
+| Traces | Every candidate records model response, 1M controller decision when available, saved file, AST check, compile status, correctness, timing, reward, and accept/reject |
 | Subscores | HUD-normalized `0..1` components for reward, correctness, speedup, held-out, anti-hack, and compile success |
 | Groups | `--hud-group N` repeats each HUD task per candidate to inspect reward spread |
 | Training | HUD traces can feed GRPO once grouped rewards show useful variance |
@@ -188,8 +200,13 @@ HUD-facing reward is normalized to `0..1`. The raw Protean reward remains in `in
 
 | Artifact | Purpose |
 |---|---|
-| [HUD environment](https://hud.ai/environments/9907b272-ef58-4f57-9cd3-5dbcb37dd51e) | Deployed Protean HUD environment, image version 5 |
-| [HUD taskset](https://hud.ai/tasksets/6d2feb10-b23c-4928-a1f9-e8b53db364d7) | Synced `protean-kernel-optimizer` taskset with all four tasks |
+| [Current HUD environment](https://hud.ai/environments/32bb1f0c-0737-4a58-8a5e-5c9ec8a2f01b) | Deployed and introspected Protean HUD environment with 3 templates |
+| [Current HUD taskset](https://hud.ai/tasksets/3f2d2423-72d4-4541-bb18-b78e31151676) | Synced `protean-kernel-optimizer` taskset with all six rows |
+| [Requested HUD environment](https://hud.ai/environments/9907b272-ef58-4f57-9cd3-5dbcb37dd51e) | Earlier public environment URL supplied for the demo |
+| [Requested HUD taskset](https://hud.ai/tasksets/6d2feb10-b23c-4928-a1f9-e8b53db364d7) | Earlier public taskset URL supplied for the demo |
+| [HUD all-ops grouped live job](https://hud.ai/jobs/3eda0cb665df40f6a3f25a89460819ae) | Spark `group=2` live optimizer run across all three ops |
+| [HUD trace smoke job](https://hud.ai/jobs/53014ddee1c34b60b229e700532793d3) | One-op real trace smoke with no HUD auth errors |
+| `demo/powered-eval-200.json` | 200-task powered eval artifact with bootstrap CI and sign test |
 | [HUD control-plane smoke job](https://hud.ai/jobs/4e03f95d8eb440989758d9b6d37dc183) | One Spark optimizer run streamed five trials into one grouped HUD job |
 | [HUD passing demo job](https://hud.ai/jobs/5a3ddc3f24a748d9abda38866bccb503) | Shows speed-sensitive non-zero reward in HUD dashboard |
 | [HUD generic-agent integration job](https://hud.ai/jobs/22314aa9438c4d41bb98edeadea29913) | Shows standard HUD eval path with a weak one-step agent |
@@ -225,7 +242,7 @@ Hard failures get reward `0.0`. Correct kernels get a small correctness floor pl
 |---|---|
 | `src/protean/grader.py` | Direct verifier entrypoint and HUD result adapter |
 | `src/protean/bench_core.py` | CUDA correctness and timing harness |
-| `src/protean/env.py` | HUD wrapper exposing four task ids |
+| `src/protean/env.py` | HUD wrapper exposing six task ids |
 | `src/protean/hud_stream.py` | One-job HUD streaming for optimizer candidates, trace steps, grouped rollouts |
 | `src/protean/optimizer.py` | Iterative candidate generation, evaluation, accept/reject, logging |
 | `src/protean/kernels.py` | Known-good kernels and red-team examples |

@@ -31,7 +31,7 @@ Acceptance:
 
 Status: expected behavior, not a verifier failure.
 
-The generic one-step `claude-haiku-4-5` HUD run produced reward `0.0`. The deterministic Protean demo agent now produces speed-sensitive non-zero rewards on all four tasks. This proves the HUD verifier path works, but it also shows that a generic model needs better prompting/tooling before it can solve the tasks.
+The generic one-step `claude-haiku-4-5` HUD run produced reward `0.0`. The deterministic Protean demo agent now produces speed-sensitive non-zero rewards on public tasks. This proves the HUD verifier path works, but it also shows that a generic model needs better prompting/tooling before it can solve the tasks.
 
 Next:
 
@@ -53,7 +53,7 @@ Fix:
 
 ### 4. Demo benchmark artifact is per-op
 
-`scripts/run_demo_benchmark.py` currently takes one op at a time. The README presents both ops, but the script should optionally generate a combined two-op report.
+`scripts/run_demo_benchmark.py` currently takes one op at a time. The README presents all public ops, but the script should optionally generate a combined report.
 
 Fix:
 
@@ -85,7 +85,7 @@ The remaining platform check is a grouped remote eval that exits cleanly from th
 hud eval protean-kernel-optimizer claude --full --group 3 --max-concurrent 4
 ```
 
-The first attempt loaded all four tasks and started 12 grouped runs, but the CLI produced no progress output for several minutes and was interrupted to avoid leaving an unmanaged long-running process.
+The first grouped platform attempt loaded the public tasks and started grouped runs, but the CLI produced no progress output for several minutes and was interrupted to avoid leaving an unmanaged long-running process.
 
 ### 7. Static anti-hack checks are intentionally minimal
 

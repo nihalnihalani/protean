@@ -12,21 +12,16 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
 from protean.grader import grade_source
-from protean.kernels import HAND_OPTIMIZED_ELEMENTWISE_ADD_RELU, HAND_OPTIMIZED_RMSNORM
-
-
-KERNELS = {
-    "elementwise_add_relu": HAND_OPTIMIZED_ELEMENTWISE_ADD_RELU,
-    "rmsnorm": HAND_OPTIMIZED_RMSNORM,
-}
+from protean.kernels import seed_kernel_for
+from protean.task_catalog import OPS
 
 
 def main() -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--op", choices=sorted(KERNELS), default="elementwise_add_relu")
+    parser.add_argument("--op", choices=sorted(op.name for op in OPS), default="elementwise_add_relu")
     args = parser.parse_args()
     grade = grade_source(
-        KERNELS[args.op],
+        seed_kernel_for(args.op),
         op=args.op,
         split="held_out",
         reps=20,

@@ -5,11 +5,31 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
+
+
+def _bootstrap_hud_api_key() -> None:
+    if os.environ.get("HUD_API_KEY"):
+        return
+    hud_env = Path.home() / ".hud" / ".env"
+    if not hud_env.exists():
+        return
+    for line in hud_env.read_text().splitlines():
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#") or "=" not in stripped:
+            continue
+        key, value = stripped.split("=", 1)
+        if key.strip() == "HUD_API_KEY":
+            os.environ["HUD_API_KEY"] = value.strip().strip('"').strip("'")
+            return
+
+
+_bootstrap_hud_api_key()
 
 from protean.optimizer import run_optimization
 from protean.task_catalog import OPS
@@ -24,6 +44,8 @@ def main() -> int:
                         help="Run the optimizer on every registered op.")
     parser.add_argument("--edit-policy", choices=["local", "learned", "fireworks"], default="local")
     parser.add_argument("--policy-path", help="Optional tiny policy JSON used to order kernel edits.")
+    parser.add_argument("--controller", default=None,
+                        help="Optional 1M policy-head JSON to log controller decisions during Fireworks/local runs.")
     parser.add_argument("--fireworks-model", default=None)
     parser.add_argument("--stream-hud", action="store_true",
                         help="Stream every optimizer trial into one HUD job/session.")
@@ -56,6 +78,7 @@ def main() -> int:
             op=op,
             edit_policy=args.edit_policy,
             policy_path=args.policy_path,
+            controller_path=args.controller,
             fireworks_model=args.fireworks_model,
             stream_hud=args.stream_hud,
             hud_env_source=args.hud_env_source,

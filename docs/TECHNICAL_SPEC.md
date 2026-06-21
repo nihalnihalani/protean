@@ -180,8 +180,9 @@ The weighted HUD score is schema-safe. The diagnostic subscores are visible in t
 2. Each optimizer trial runs the op's train and held-out HUD tasks under that same job.
 3. A custom HUD agent writes the candidate source into `run.trace.content`.
 4. `run.record(...)` emits live trace steps: model prompt, model response, candidate saved, AST check, compile status, correctness, timing, reward, and accept/reject.
-5. The optimizer logs the shared `hud_stream.job_url` and per-run trace ids in JSONL.
-6. `--hud-group N` repeats each task per candidate, which is the first check for GRPO-style reward spread.
+5. If a 1M policy-head artifact is supplied, the controller's ranked edit decision is stored in trace metadata.
+6. The optimizer logs the shared `hud_stream.job_url` and per-run trace ids in JSONL.
+7. `--hud-group N` repeats each task per candidate, which is the first check for GRPO-style reward spread.
 
 ## 10. Verified Numbers
 
@@ -200,8 +201,18 @@ https://hud.ai/jobs/5a3ddc3f24a748d9abda38866bccb503
 
 HUD platform deployment:
 
-- environment: https://hud.ai/environments/9907b272-ef58-4f57-9cd3-5dbcb37dd51e
-- taskset: https://hud.ai/tasksets/6d2feb10-b23c-4928-a1f9-e8b53db364d7
+- requested environment: https://hud.ai/environments/9907b272-ef58-4f57-9cd3-5dbcb37dd51e
+- requested taskset: https://hud.ai/tasksets/6d2feb10-b23c-4928-a1f9-e8b53db364d7
+- active verified environment: https://hud.ai/environments/32bb1f0c-0737-4a58-8a5e-5c9ec8a2f01b
+- active verified taskset: https://hud.ai/tasksets/3f2d2423-72d4-4541-bb18-b78e31151676
+- active all-ops grouped job: https://hud.ai/jobs/3eda0cb665df40f6a3f25a89460819ae
+
+Powered held-out evaluation:
+
+- artifact: `demo/powered-eval-200.json`
+- `n_tasks=200`
+- `POWERED=True`
+- reports bootstrap confidence interval and sign test for held-out generalization
 
 ## 11. Future Training Spec
 

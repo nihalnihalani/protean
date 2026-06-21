@@ -84,15 +84,17 @@ def test_hud_registration_uses_name_api():
         env_mod.env = env_mod._make_env()
         decorator_add = env_mod._template("elementwise_add_relu")
         decorator_rms = env_mod._template("rmsnorm")
+        decorator_softmax = env_mod._template("softmax_rows")
 
         def placeholder():
             return None
 
         assert decorator_add(placeholder) is placeholder
         assert decorator_rms(placeholder) is placeholder
+        assert decorator_softmax(placeholder) is placeholder
     finally:
         env_mod.Environment = original_environment
         env_mod.env = original_env
 
     assert calls["env_names"] == ["protean"]
-    assert calls["template_ids"] == ["elementwise_add_relu", "rmsnorm"]
+    assert calls["template_ids"] == ["elementwise_add_relu", "rmsnorm", "softmax_rows"]

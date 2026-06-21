@@ -37,11 +37,12 @@ cd /home/alhinai/protean
 python -m pytest -q
 python scripts/smoke_verifier.py --op elementwise_add_relu
 python scripts/smoke_verifier.py --op rmsnorm
+python scripts/smoke_verifier.py --op softmax_rows
 ```
 
 ## HUD Dashboard Proof
 
-- [x] HUD task discovery lists all four tasks.
+- [x] HUD task discovery lists all six tasks.
 - [x] Deterministic Protean demo agent creates a HUD job with non-zero reward.
 - [x] Passing job: https://hud.ai/jobs/5a3ddc3f24a748d9abda38866bccb503
 
@@ -69,13 +70,16 @@ rmsnorm_train:                 reward=1.211 correct=True speedup=6.40x caps=[]
 - [x] Optional HUD streaming records `hud_stream.job_url` or `hud_stream_error` per trial.
 - [x] One optimizer run streams into one HUD job/session.
 - [x] HUD trace steps include model response, candidate save, AST, compile, correctness, timing, reward, and accept/reject.
+- [x] HUD trace steps include the 1M controller decision when a controller artifact is present.
 - [x] HUD reward/subscores are normalized to `0..1`; raw Protean reward is in metadata.
 
 ```bash
 python scripts/run_optimizer.py --all-ops --max-rounds 1 --out-dir runs/protean-hud-preflight
-HUD_API_KEY=... python scripts/run_optimizer.py --op elementwise_add_relu --max-rounds 1 --stream-hud --hud-job-name protean-hud-stream-smoke --out-dir runs/protean-hud-stream-smoke
-HUD_API_KEY=... python scripts/run_optimizer.py --op elementwise_add_relu --max-rounds 1 --stream-hud --hud-group 3 --out-dir runs/protean-hud-group-smoke
+python scripts/run_optimizer.py --op elementwise_add_relu --max-rounds 1 --stream-hud --hud-job-name protean-hud-stream-smoke --out-dir runs/protean-hud-stream-smoke
+python scripts/run_hud_optimizer_agent.py --policy local --all-ops --max-rounds 1 --group 2 --job-name protean-live-fallback
 ```
+
+HUD auth should come from `hud set HUD_API_KEY=...` or `export HUD_API_KEY=...`. Do not source the project `.env`.
 
 Verified Spark output:
 
@@ -87,13 +91,25 @@ rmsnorm               accepted=0/5
 Verified HUD control-plane smoke on Spark:
 
 ```text
-job_url: https://hud.ai/jobs/4e03f95d8eb440989758d9b6d37dc183
+job_url: https://hud.ai/jobs/53014ddee1c34b60b229e700532793d3
+op: elementwise_add_relu
 trials: 5
-group: 2
-rows_per_trial: 4
-trace_ids: 20
-reward_std: 0.037614
 accepted: 1/5
+group: 1
+auth_errors: 0
+held_out_correct: 3/3
+mean_held_out_speedup: 1.915966
+```
+
+Verified all-ops grouped live run on Spark:
+
+```text
+job_url: https://hud.ai/jobs/3eda0cb665df40f6a3f25a89460819ae
+group: 2
+elementwise_add_relu: accepted 1/5
+rmsnorm: accepted 0/5
+softmax_rows: accepted 2/5
+auth_errors: 0
 ```
 
 ## Fireworks Overnight Run
@@ -104,6 +120,7 @@ Requires `FIREWORKS_API_KEY`. Add `HUD_API_KEY` and `--stream-hud` when every tr
 export FIREWORKS_API_KEY=...
 export HUD_API_KEY=...
 python scripts/run_optimizer.py --edit-policy fireworks --all-ops --max-rounds 20 --stream-hud --hud-job-name protean-fireworks-overnight --out-dir runs/protean-fireworks-overnight
+python scripts/run_hud_optimizer_agent.py --policy fireworks --controller outputs/policy_head.pt --all-ops --max-rounds 50 --group 4 --job-name protean-live-kernel-optimizer
 ```
 
 Acceptance criteria:
@@ -130,7 +147,7 @@ Acceptance criteria:
 
 - [x] HUD environment deploy succeeds.
 - [x] Taskset appears on the HUD dashboard as `protean-kernel-optimizer`.
-- [x] All four task rows are present.
+- [x] All six task rows are present, including `softmax_rows`.
 - [ ] `--group 3` remote eval completes without operator interruption.
 
 Verified HUD platform artifacts:
@@ -138,8 +155,10 @@ Verified HUD platform artifacts:
 ```text
 environment: https://hud.ai/environments/9907b272-ef58-4f57-9cd3-5dbcb37dd51e
 taskset:     https://hud.ai/tasksets/6d2feb10-b23c-4928-a1f9-e8b53db364d7
-deploy:      image version 5, v6 control channel introspection OK
-sync:        4 created, 0 updated
+active env:  https://hud.ai/environments/32bb1f0c-0737-4a58-8a5e-5c9ec8a2f01b
+active set:  https://hud.ai/tasksets/3f2d2423-72d4-4541-bb18-b78e31151676
+deploy:      image version 1, v6 control channel introspection OK
+sync:        6 created, 0 updated under the active HUD key
 ```
 
 ## GRPO Stretch Controls

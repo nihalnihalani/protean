@@ -102,7 +102,7 @@ If `--stream-hud` is enabled, the optimizer opens one HUD job/session for the ru
 
 ## HUD Path
 
-`src/protean/env.py` exposes four concrete HUD tasks:
+`src/protean/env.py` exposes six concrete HUD tasks:
 
 | Task | Op | Split |
 |---|---|---|
@@ -110,6 +110,8 @@ If `--stream-hud` is enabled, the optimizer opens one HUD job/session for the ru
 | `elementwise_add_relu_held_out` | `elementwise_add_relu` | held-out |
 | `rmsnorm_train` | `rmsnorm` | train |
 | `rmsnorm_held_out` | `rmsnorm` | held-out |
+| `softmax_rows_train` | `softmax_rows` | train |
+| `softmax_rows_held_out` | `softmax_rows` | held-out |
 
 The HUD wrapper does not duplicate grading logic. It calls:
 
@@ -123,6 +125,7 @@ Each streamed trial records trace steps for:
 
 - `model_prompt`
 - `model_response`
+- `controller_decision` when a 1M policy-head artifact is available
 - `candidate_saved`
 - `ast_check`
 - `compile`
@@ -146,7 +149,10 @@ python scripts/run_optimizer.py --all-ops --max-rounds 1
 HUD_API_KEY=... PYTHONPATH=src python scripts/run_hud_demo_agent.py
 HUD_API_KEY=... PYTHONPATH=src python scripts/run_optimizer.py --op elementwise_add_relu --max-rounds 1 --stream-hud --hud-job-name protean-smoke
 HUD_API_KEY=... PYTHONPATH=src python scripts/run_optimizer.py --op elementwise_add_relu --max-rounds 1 --stream-hud --hud-group 3
+PYTHONPATH=src python scripts/run_hud_optimizer_agent.py --policy local --all-ops --max-rounds 1 --group 2 --job-name protean-live-fallback
 ```
+
+Prefer `hud set HUD_API_KEY=...` or exporting `HUD_API_KEY` directly. Do not source the project `.env`.
 
 ## Design Boundaries
 
