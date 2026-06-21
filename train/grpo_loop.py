@@ -59,12 +59,13 @@ def dynamic_reward_fn(prompts, completions, op, M, N, dtype, **kwargs):
 def build_dataset(step=0, max_steps=150):
     """Build the GRPO training dataset from the frozen manifest.
     
-    Step 11: reads M/N directly from the manifest (via task.columns) when
-    available, so the training shapes exactly match the frozen manifest_v1.jsonl.
+    Step 11: reads M/N directly from the manifest when available, so the
+    training shapes exactly match the frozen manifest_v1.jsonl.
     Falls back to curriculum-aware sampling only when the manifest doesn't
     include shape data (e.g. dynamic generation in local dev mode).
     
     Held-out tasks always use the full TEST_M pool (moat invariant).
+    TASKS is a list[dict] loaded by protean.manifest.load_frozen_manifest.
     """
     data = {
         "prompt": [],
@@ -76,16 +77,17 @@ def build_dataset(step=0, max_steps=150):
     }
     
     for task in TASKS:
-        op_name = task.columns["op"]
-        split = task.columns["split"]
-        seed = int(task.columns["seed"])
+        # TASKS is a list[dict] from the frozen manifest — use dict access.
+        op_name = task["op"]
+        split = task["split"]
+        seed = int(task["seed"])
         
         # Prefer manifest M/N (step 11: reproducibility). Fall back to
         # curriculum-aware sampling if the manifest didn't include shapes
         # (e.g. dynamic generation via PROTEAN_ALLOW_DYNAMIC_MANIFEST=1).
-        if "M" in task.columns and "N" in task.columns:
-            M = int(task.columns["M"])
-            N = int(task.columns["N"])
+        if "M" in task and "N" in task:
+            M = int(task["M"])
+            N = int(task["N"])
         else:
             M, N = sample_shape_curriculum(op_name, split, seed, step=step, max_steps=max_steps)
         op_spec = OPS_BY_NAME[op_name]
@@ -103,6 +105,7 @@ def build_dataset(step=0, max_steps=150):
         data["split"].append(split)
         
     return Dataset.from_dict(data)
+
 
 
 def build_grpo_configs():
@@ -268,7 +271,6 @@ def main():
     
     # 2. Run calibration
     print("Running calibration preflight...")
-    import os
     if hasattr(os, "geteuid") and os.geteuid() != 0 and os.path.exists("/donotaccess"):
         raise RuntimeError(
             "Trainer must run as root to write /donotaccess/reward_config.json during calibration "
