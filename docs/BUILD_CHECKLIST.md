@@ -119,14 +119,17 @@ Requires `FIREWORKS_API_KEY`. Add `HUD_API_KEY` and `--stream-hud` when every tr
 ```bash
 export FIREWORKS_API_KEY=...
 export HUD_API_KEY=...
-python scripts/run_optimizer.py --edit-policy fireworks --all-ops --max-rounds 20 --stream-hud --hud-job-name protean-fireworks-overnight --out-dir runs/protean-fireworks-overnight
+python scripts/run_optimizer.py --edit-policy fireworks --all-ops --duration-hours 8 --stream-hud --hud-job-name protean-fireworks-overnight --out-dir runs/protean-fireworks-overnight
 python scripts/run_hud_optimizer_agent.py --policy fireworks --controller outputs/policy_head.pt --all-ops --max-rounds 50 --group 4 --job-name protean-live-kernel-optimizer
+DURATION_HOURS=8 POLICY=fireworks HUD_GROUP=1 scripts/start_overnight_hud_optimizer.sh
 ```
 
 Acceptance criteria:
 
 - [ ] Every Fireworks candidate source is saved.
 - [ ] Every trial is logged.
+- [ ] Time-budgeted runs stop with `stop_reason=duration_reached` or the configured round cap.
+- [ ] `run_complete` is appended to `trials.jsonl` and `improvements_<op>.jsonl`.
 - [ ] Compile/runtime errors appear as `eval_error` and rejected, not lost.
 - [ ] Every trial has either `hud_stream.job_url` or `hud_stream_error`.
 - [x] All streamed trials share one HUD job URL for the optimizer session in local-policy smoke.

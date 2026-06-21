@@ -118,6 +118,44 @@ HUD auth can come from `export HUD_API_KEY=...` or `hud set HUD_API_KEY=...`. Do
 
 This opens one HUD job for the optimizer run, then records each candidate as HUD traces under that job. The local `trials.jsonl` stays the continuous audit log, and each trial row records either `hud_stream.job_url` or `hud_stream_error`.
 
+Run the real overnight server job on Spark:
+
+```bash
+ssh spark
+cd ~/protean
+git pull origin main
+export FIREWORKS_API_KEY=...
+export HUD_API_KEY=...   # or run: hud set HUD_API_KEY=...
+DURATION_HOURS=8 POLICY=fireworks HUD_GROUP=1 \
+  scripts/start_overnight_hud_optimizer.sh
+```
+
+This starts a detached 8-hour optimizer process. It keeps running after the SSH
+session disconnects, streams each trial to one HUD job, and writes the local
+audit trail under `runs/protean-overnight-<timestamp>/`. With `--all-ops`, the
+launcher splits `DURATION_HOURS` across the registered ops so the full server
+job stays near the requested wall-clock budget.
+
+Check progress from another shell:
+
+```bash
+ssh spark
+cd ~/protean
+scripts/status_overnight_hud_optimizer.sh runs/protean-overnight-<timestamp>
+tail -f runs/protean-overnight-<timestamp>/overnight.log
+```
+
+The files that matter after the run are:
+
+| File | Purpose |
+|---|---|
+| `overnight.log` | Long-running process stdout/stderr |
+| `pid` | Server process id |
+| `<op>/trials.jsonl` | Full trial log with prompt, edit, cost, reward, HUD stream result |
+| `<op>/improvements_<op>.jsonl` | Compact reward/speedup curve for charts |
+| `<op>/summary_<op>.json` | Final best score, accepted count, stop reason, HUD job URL |
+| `<op>/candidates/*.py` | Every candidate kernel source, including failures |
+
 Measure reward spread for trainability:
 
 ```bash

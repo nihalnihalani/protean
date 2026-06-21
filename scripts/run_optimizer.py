@@ -39,6 +39,8 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--out-dir", default="runs/protean-overnight")
     parser.add_argument("--max-rounds", type=int, default=1)
+    parser.add_argument("--duration-hours", type=float, default=None,
+                        help="Run until this wall-clock budget expires. If max-rounds is left at 1, it is raised high enough for overnight runs.")
     parser.add_argument("--op", default="elementwise_add_relu")
     parser.add_argument("--all-ops", action="store_true",
                         help="Run the optimizer on every registered op.")
@@ -57,7 +59,15 @@ def main() -> int:
                         help="Repeat each HUD task this many times per streamed trial.")
     args = parser.parse_args()
 
+    duration_seconds = args.duration_hours * 3600 if args.duration_hours is not None else None
+    max_rounds = args.max_rounds
+    if duration_seconds is not None and args.max_rounds == 1:
+        max_rounds = 1_000_000
+
     ops_to_run = [op.name for op in OPS] if args.all_ops else [args.op]
+    op_duration_seconds = duration_seconds
+    if duration_seconds is not None and args.all_ops and ops_to_run:
+        op_duration_seconds = duration_seconds / len(ops_to_run)
     results = {}
     hud_session = None
     if args.stream_hud:
@@ -74,7 +84,8 @@ def main() -> int:
             op_out_dir = op_out_dir / op
         result = run_optimization(
             out_dir=op_out_dir,
-            max_rounds=args.max_rounds,
+            max_rounds=max_rounds,
+            duration_seconds=op_duration_seconds,
             op=op,
             edit_policy=args.edit_policy,
             policy_path=args.policy_path,

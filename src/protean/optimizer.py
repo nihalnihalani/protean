@@ -137,6 +137,7 @@ def run_optimization(
     *,
     out_dir: str | Path = "runs/protean-overnight",
     max_rounds: int = 1,
+    duration_seconds: float | None = None,
     seed_source: str | None = None,
     policy_path: str | Path | None = None,
     controller_path: str | Path | None = None,
@@ -164,6 +165,8 @@ def run_optimization(
 
     best_source = seed_source
     started = time.time()
+    deadline = started + duration_seconds if duration_seconds is not None else None
+    stop_reason = "max_rounds_reached"
     best_summary = evaluate_kernel(best_source, op=op, reps=30, warmup=8)
     best_score = score(best_summary)
     best_path.write_text(best_source)
@@ -215,6 +218,9 @@ def run_optimization(
         )
 
         for round_idx in range(max_rounds):
+            if deadline is not None and time.time() >= deadline:
+                stop_reason = "duration_reached"
+                break
             trial_controller_decision = controller_decision(best_summary, controller_path)
             if edit_policy == "fireworks":
                 from protean.model.fireworks_policy import DEFAULT_FIREWORKS_MODEL, fireworks_kernel_edit
@@ -341,6 +347,37 @@ def run_optimization(
                     )
                     + "\n"
                 )
+        else:
+            stop_reason = "max_rounds_reached"
+
+        complete_row = {
+            "event": "run_complete",
+            "time": time.time(),
+            "elapsed_sec": round(time.time() - started, 6),
+            "op": op,
+            "trials": trial_count,
+            "accepted": accepted_count,
+            "stop_reason": stop_reason,
+            "duration_seconds": duration_seconds,
+            "deadline": deadline,
+            "best_score": best_score,
+            "best_summary": best_summary,
+        }
+        improvement_complete_row = {
+            "event": "run_complete",
+            "time": complete_row["time"],
+            "elapsed_sec": complete_row["elapsed_sec"],
+            "op": op,
+            "trials": trial_count,
+            "accepted": accepted_count,
+            "stop_reason": stop_reason,
+            "duration_seconds": duration_seconds,
+            "best_held_out_speedup_after": best_summary.get("mean_held_out_speedup", 0.0),
+            "best_optimizer_reward_after": best_summary.get("mean_optimizer_reward", 0.0),
+            "best_correct_held_out_after": best_summary.get("correct_held_out", 0),
+        }
+        log.write(json.dumps(complete_row, sort_keys=True) + "\n")
+        improvement_log.write(json.dumps(improvement_complete_row, sort_keys=True) + "\n")
 
     final = {
         "best_score": best_score,
@@ -350,6 +387,9 @@ def run_optimization(
         "improvement_log": str(improvement_log_path),
         "trials": trial_count,
         "accepted": accepted_count,
+        "stop_reason": stop_reason,
+        "duration_seconds": duration_seconds,
+        "deadline": deadline,
         "elapsed_sec": round(time.time() - started, 6),
         "policy_path": str(policy_path) if policy_path is not None else None,
         "controller_path": str(controller_path) if controller_path is not None else None,

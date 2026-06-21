@@ -144,9 +144,32 @@ Next run:
 ```bash
 export FIREWORKS_API_KEY=...
 export HUD_API_KEY=...
-python scripts/run_optimizer.py --edit-policy fireworks --all-ops --max-rounds 20 --stream-hud --hud-job-name protean-fireworks-overnight --out-dir runs/protean-fireworks-overnight
+python scripts/run_optimizer.py --edit-policy fireworks --all-ops --duration-hours 8 --stream-hud --hud-job-name protean-fireworks-overnight --out-dir runs/protean-fireworks-overnight
 python scripts/run_hud_optimizer_agent.py --policy fireworks --controller outputs/policy_head.pt --all-ops --max-rounds 50 --group 4 --job-name protean-live-kernel-optimizer
 ```
+
+Server-safe overnight launch:
+
+```bash
+ssh spark
+cd ~/protean
+git pull origin main
+export FIREWORKS_API_KEY=...
+export HUD_API_KEY=...
+DURATION_HOURS=8 POLICY=fireworks HUD_GROUP=1 scripts/start_overnight_hud_optimizer.sh
+```
+
+The launcher uses `nohup`, writes `pid`, `overnight.log`, per-op
+`trials.jsonl`, per-op `improvements_<op>.jsonl`, and one `summary_<op>.json`
+for each optimized op. With `--all-ops`, `DURATION_HOURS` is split across the
+registered ops so the full job stays close to the requested wall-clock budget.
+Use:
+
+```bash
+scripts/status_overnight_hud_optimizer.sh runs/protean-overnight-<timestamp>
+```
+
+to inspect the process, recent logs, and latest improvement rows.
 
 ## Layer 5: Learned Policy Head
 
