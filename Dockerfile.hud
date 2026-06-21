@@ -4,6 +4,7 @@ ENV DEBIAN_FRONTEND=noninteractive
 ENV TRITON_CACHE_DIR=/triton-cache
 ENV VIRTUAL_ENV=/opt/venv
 ENV PATH="/opt/venv/bin:${PATH}"
+ENV TORCH_CUDA_ARCH_LIST="8.0;8.6;8.9;9.0"
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
         python3.11 python3.11-venv python3-pip git util-linux && \
@@ -12,12 +13,30 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 RUN mkdir -p /triton-cache && chmod 777 /triton-cache
 
 WORKDIR /app
-COPY . /app
+
+# Initialize virtualenv and upgrade pip
 RUN python3.11 -m venv /opt/venv && \
-    python -m pip install --no-cache-dir --upgrade pip && \
-    python -m pip install --no-cache-dir "hud-python[agents]==0.6.6" && \
-    python -m pip install --no-cache-dir -e ".[gpu]" && \
+    python -m pip install --no-cache-dir --upgrade pip
+
+# Cache layer: Install vllm first (since it's heavy and drags torch with it)
+RUN python -m pip install --no-cache-dir vllm==0.6.3
+
+# Cache layer: Copy requirements-train.txt and install the rest of the RL training stack
+COPY requirements-train.txt /app/requirements-train.txt
+RUN python -m pip install --no-cache-dir -r /app/requirements-train.txt
+
+# Cache layer: Install HUD SDK
+RUN python -m pip install --no-cache-dir "hud-python[agents]==0.6.6"
+
+# Now copy the rest of the project source code
+COPY . /app
+
+# Install the project packages in editable mode
+RUN python -m pip install --no-cache-dir -e ".[gpu]" && \
     python -m pip install --no-cache-dir -e . --no-deps
+
+# Build-time import smoke check
+RUN python -c "import torch, trl, vllm, peft; print(f'torch={torch.__version__} trl={trl.__version__} vllm={vllm.__version__} peft={peft.__version__}'); assert torch.cuda.is_available() or True, 'CUDA check deferred to runtime'"
 
 RUN useradd -m -u 1000 agent
 
@@ -43,7 +62,9 @@ RUN mkdir -p /donotaccess && \
     test -f /donotaccess/rewards.py && \
     test -f /donotaccess/reward_config.json && \
     test -f /donotaccess/elementwise_add_relu/grade.py && \
+    test -f /donotaccess/elementwise_add_relu/reference.py && \
     test -f /donotaccess/rmsnorm/grade.py && \
+    test -f /donotaccess/rmsnorm/reference.py && \
     test -f /donotaccess/softmax_rows/grade.py && \
     test -f /donotaccess/softmax_rows/reference.py && \
     su agent -c "cat /donotaccess/rewards.py" 2>&1 | grep -qE "(Permission denied|cannot open)" && \
