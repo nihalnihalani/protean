@@ -112,6 +112,45 @@ HUD exposes four task ids:
 - `rmsnorm_train`
 - `rmsnorm_held_out`
 
+### HUD Dashboard Results
+
+Protean's demo agent (deterministic, submits known-good kernels) creates a real
+job on the HUD platform with non-zero rewards:
+
+- **Passing demo job**: https://hud.ai/jobs/8a8c3bfcf5904b9f8181ff13f3f309a7
+- **Integration job** (Fireworks openai_compatible): https://hud.ai/jobs/3af4548f0afe4f449b5245a2809ae0e0
+
+Per-task results (Spark GB10, hand-optimized Triton kernels):
+
+| Task                          | Reward | Correct | Speedup  | Caps |
+|-------------------------------|--------|---------|----------|------|
+| elementwise_add_relu_train    | 1.300  | True    | 1.55x    | []   |
+| elementwise_add_relu_held_out | 1.300  | True    | 2.08x    | []   |
+| rmsnorm_train                 | 1.300  | True    | 6.38x    | []   |
+| rmsnorm_held_out              | 1.300  | True    | 6.87x    | []   |
+
+Run the demo agent yourself:
+
+```bash
+export HUD_API_KEY=...
+python scripts/run_hud_demo_agent.py
+```
+
+### Fireworks gpt-oss-120b Integration
+
+Protean's optimizer supports Fireworks as a model-backed edit policy. The model
+receives the current best kernel and proposes improvements as JSON.
+
+```bash
+export FIREWORKS_API_KEY=...
+python scripts/run_optimizer.py --edit-policy fireworks --all-ops --max-rounds 5
+```
+
+Verified live: gpt-oss-120b produces valid Triton kernel edits with
+`@triton.jit` and `solution()` on both ops, with real token counts and cost
+tracking. The crash-safe optimizer logs compile errors as rejected trials
+instead of aborting the run.
+
 Outputs:
 
 - `demo/protean-demo-results.md`
