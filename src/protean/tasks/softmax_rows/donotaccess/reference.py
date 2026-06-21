@@ -10,7 +10,12 @@ def eager_fn(x: torch.Tensor) -> torch.Tensor:
     return torch.softmax(x, dim=-1)
 
 
-def make_inputs(shape, seed: int, dtype=torch.float16, device="cuda"):
+def make_inputs(
+    shape: int | tuple[int, ...],
+    seed: int,
+    dtype: torch.dtype = torch.float16,
+    device: str = "cuda",
+) -> tuple[torch.Tensor]:
     """Fresh random inputs each grading call (defeats input-overfit).
 
     Note: softmax is invariant to translation, so we scale inputs by a small factor

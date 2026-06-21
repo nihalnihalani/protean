@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import random
 from typing import Literal
 
 Split = Literal["train", "held_out"]
@@ -67,7 +68,7 @@ def is_offgrid(m: int) -> bool:
     return (m not in TRAIN_SHAPES) and (m % TILING_BLOCK != 0)
 
 
-def sample_heldout_shape(rng) -> int:
+def sample_heldout_shape(rng: random.Random) -> int:
     """Draw one continuous off-grid held-out size. `rng` is a caller-seeded random.Random (determinism)."""
     band = _INTERP_BAND if rng.random() < _INTERP_FRACTION else _EXTRAP_BAND
     while True:

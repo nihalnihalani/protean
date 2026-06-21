@@ -71,6 +71,7 @@ def resolve_hud_api_key() -> str:
 
     key = os.environ.get("HUD_API_KEY")
     if not key:
+        settings: Any | None
         try:
             from hud.settings import settings
         except Exception:
@@ -187,7 +188,7 @@ async def _stream_candidate_async(
     metrics = _summary_metrics(summary, eval_error)
 
     class CandidateAgent(Agent):
-        async def __call__(self, run) -> None:
+        async def __call__(self, run: Any) -> None:
             run.trace.extra["agent"] = "protean_optimizer_stream"
             run.trace.extra.update(
                 {

@@ -24,3 +24,17 @@ repos:
         args: [--maxkb=500]
         # The frozen task manifest is an intentional committed artifact.
         exclude: ^manifest_v1\.jsonl$
+
+  # Type gate mirrors the CI `typecheck` job. Runs against the local venv
+  # (system language) so the [[tool.mypy.overrides]] GPU-stub config applies;
+  # an isolated pre-commit env would miss the installed torch/triton overrides.
+  # Run `make install-dev` first: it installs the `config` extra so mypy sees
+  # the pydantic backend branch (matching CI's `--extra dev --extra config`).
+  - repo: local
+    hooks:
+      - id: mypy
+        name: mypy (src/protean, zero errors)
+        entry: python -m mypy src/protean
+        language: system
+        types: [python]
+        pass_filenames: false

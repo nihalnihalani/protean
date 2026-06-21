@@ -17,8 +17,12 @@ import math
 import random
 from collections import defaultdict
 from collections.abc import Callable
+from typing import TYPE_CHECKING
 
 from protean.splits import N_HELDOUT_PER_OP, N_OPS, REAL_OPS, sample_heldout_shape
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 
 # ---- normal quantile (Acklam) for power/MDE math ----
@@ -192,7 +196,7 @@ def hierarchical_bootstrap_ci(
     boots = []
     for _ in range(B):
         chosen = [rng.choice(ops) for _ in ops]
-        vals = []
+        vals: list[float] = []
         for op in chosen:
             d = deltas_by_op[op]
             vals.extend(d[rng.randrange(len(d))] for _ in range(len(d)))
@@ -260,7 +264,7 @@ def build_eval_set(ops: list, n_per_op: int = N_HELDOUT_PER_OP, seed: int = 0) -
     return tasks
 
 
-def _crn_seed(base_seed: int, op, idx, k: int) -> int:
+def _crn_seed(base_seed: int, op: str, idx: int, k: int) -> int:
     """Deterministic per-(task, rollout-index) seed for common-random-numbers pairing."""
     import hashlib
 
@@ -400,7 +404,7 @@ def paired_sources_report(
 # GPU-only at run time (delegates to the real grader); the optimizer can call this for final reporting.
 # ---------------------------------------------------------------------------
 def powered_eval_from_run_dir(
-    run_dir,
+    run_dir: str | Path,
     ops: list,
     n_per_op: int = N_HELDOUT_PER_OP,
     reps: int = 50,

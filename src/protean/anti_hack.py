@@ -210,6 +210,15 @@ def ast_clean(src: str) -> tuple[bool, str]:
         tree = ast.parse(src)
     except SyntaxError as exc:
         return False, f"syntax_error:{exc.msg}"
+    except (ValueError, TypeError) as exc:
+        # ast.parse raises ValueError on a NUL byte ("source code string cannot
+        # contain null bytes") and TypeError on non-str input; fail closed rather
+        # than letting the exception propagate out of the verifier boundary.
+        return False, f"syntax_error:{exc}"
+    except (RecursionError, MemoryError):
+        # Pathological deeply-nested / oversized inputs can exhaust the C stack or
+        # memory inside ast.parse. Treat them as invalid, never as a pass.
+        return False, "syntax_error:input_too_complex"
 
     for node in ast.walk(tree):
         # Ban only the swallow-and-return try/except timing-shell exploit; allow
@@ -241,6 +250,20 @@ def ast_clean(src: str) -> tuple[bool, str]:
             base = _dotted(node.value)
             if base == "__builtins__" or base.endswith("__dict__") or base.endswith(".__builtins__"):
                 return False, "ast_ban:builtins_subscript"
+
+        # Default-argument capture of a banned dynamic-execution primitive, e.g.
+        # `lambda v=eval: v(...)` or `def g(f=getattr): ...`. The banned name is an
+        # ast.Name in a default *value* slot, never an ast.Call target, so every
+        # call-site check above misses it -- yet at runtime the bound default lets
+        # the body invoke eval/exec/__import__ indirectly through the parameter.
+        # We walk the defaults / kw_defaults of every function and lambda and reject
+        # any default expression that references a BANNED_NAMES entry.
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)):
+            defaults = list(node.args.defaults) + [d for d in node.args.kw_defaults if d is not None]
+            for default in defaults:
+                for sub in ast.walk(default):
+                    if isinstance(sub, ast.Name) and sub.id in BANNED_NAMES:
+                        return False, f"ast_ban:default_capture:{sub.id}"
 
         # Also catch banned dispatch chains referenced as bare attributes (not
         # only as the call target), e.g. handing torch.ops.aten.add to a helper.

@@ -17,10 +17,15 @@ import sys
 import time
 import uuid
 from pathlib import Path
+from typing import TYPE_CHECKING, Any, TextIO
+
+if TYPE_CHECKING:
+    from protean.hud_stream import HudStreamSession
 
 from protean.grader import ProteanError, ProteanValidationError, grade_source
 from protean.kernels import seed_kernel_for
 from protean.model.policy import (
+    CandidateEdit,
     config_action_space,
     effective_action_space,
     learned_kernel_edits,
@@ -29,7 +34,7 @@ from protean.model.policy import (
 )
 from protean.model.rl_layer import accept_candidate, score, score_delta
 from protean.model.tiny_policy import ACTION_BLOCK_SIZES, TinyPolicyHead, state_features
-from protean.splits import HELD_OUT_SHAPES, TRAIN_SHAPES
+from protean.splits import HELD_OUT_SHAPES, TRAIN_SHAPES, Split
 
 # Public surface. The optimizer raises the grader's typed domain errors, so it
 # re-exports them: callers catching ``run_optimization`` failures can import the
@@ -73,7 +78,7 @@ def _maybe_enable_logging() -> None:
 _maybe_enable_logging()
 
 
-def _log_event(level: int, event: str, **fields) -> None:
+def _log_event(level: int, event: str, **fields: Any) -> None:
     if not _LOG.isEnabledFor(level):
         return
     payload = " ".join(f"{k}={v}" for k, v in fields.items())
@@ -91,6 +96,7 @@ class _TrialLog:
     def __init__(self, path: Path) -> None:
         self.path = path
         self._warned = False
+        self._fh: TextIO | None
         try:
             self._fh = path.open("a")
         except OSError as exc:
@@ -111,7 +117,7 @@ class _TrialLog:
     def __enter__(self) -> _TrialLog:
         return self
 
-    def __exit__(self, *exc) -> None:
+    def __exit__(self, *exc: object) -> None:
         if self._fh is not None:
             try:
                 self._fh.close()
@@ -262,7 +268,11 @@ def evaluate_kernel(
     run_id: str | None = None,
 ) -> dict:
     rows = []
-    for split, shapes in (("train", TRAIN_SHAPES), ("held_out", HELD_OUT_SHAPES)):
+    splits: tuple[tuple[Split, tuple[int, ...]], ...] = (
+        ("train", TRAIN_SHAPES),
+        ("held_out", HELD_OUT_SHAPES),
+    )
+    for split, shapes in splits:
         for shape in shapes:
             rows.append(grade_source(source, op=op, split=split, shape=shape, reps=reps, warmup=warmup, run_id=run_id))
 
@@ -350,7 +360,7 @@ def run_optimization(
     hud_timeout: float = 180.0,
     hud_job_name: str | None = None,
     hud_group: int = 1,
-    hud_session=None,
+    hud_session: HudStreamSession | None = None,
     powered_eval: bool = False,
     powered_eval_n_per_op: int = 40,
     bandit_c: float = math.sqrt(2.0),
@@ -449,6 +459,7 @@ def run_optimization(
             rounds_run += 1
             trial_controller_decision = controller_decision(best_summary, controller_path)
             selected_arm = None
+            edits: list[CandidateEdit]
             if edit_policy == "fireworks":
                 from protean.model.fireworks_policy import DEFAULT_FIREWORKS_MODEL, fireworks_kernel_edit
 
@@ -462,14 +473,17 @@ def run_optimization(
                 ]
             elif edit_policy == "bandit":
                 # UCB1 selects a single arm in the joint launch-config space.
+                # ``bandit`` is constructed above whenever edit_policy == "bandit",
+                # so it is non-None on this branch.
+                assert bandit is not None
                 selected_arm = bandit.select()
                 edits = [make_config_edit(best_source, *selected_arm)]
             elif policy_path is not None or edit_policy == "learned":
                 if policy_path is None:
                     raise ValueError("policy_path is required when edit_policy='learned'")
-                edits = learned_kernel_edits(best_source, best_summary, str(policy_path))
+                edits = list(learned_kernel_edits(best_source, best_summary, str(policy_path)))
             else:
-                edits = local_kernel_edits(best_source)
+                edits = list(local_kernel_edits(best_source))
             round_improved = False
             for edit in edits:
                 trial_count += 1

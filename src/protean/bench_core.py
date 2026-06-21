@@ -8,9 +8,16 @@ import random
 import statistics
 import sys
 import tempfile
+import types
 import uuid
+from collections.abc import Callable
 from pathlib import Path
+from typing import Any
 
+# torch/triton are configured with ignore_missing_imports in pyproject, so the
+# imported names are typed as ``Any``; the ``= None`` fallback below is therefore a
+# legal reassignment and the ``assert ... is not None`` guards in GPU-touching
+# functions (after ``_require_torch()``) document the runtime contract.
 try:
     import torch
     import triton
@@ -53,14 +60,15 @@ def _ensure_triton_cache_dir() -> None:
     raise RuntimeError("no writable Triton cache directory found")
 
 
-def _require_torch():
+def _require_torch() -> None:
     if torch is None or triton is None or tl is None:
         raise RuntimeError("torch and triton are required for CUDA benchmark verification")
     _ensure_triton_cache_dir()
 
 
-def make_inputs(n: int, dtype: str, seed: int, op: str) -> tuple[torch.Tensor, ...]:
+def make_inputs(n: int, dtype: str, seed: int, op: str) -> tuple[Any, ...]:
     _require_torch()
+    assert torch is not None
     if not torch.cuda.is_available():
         raise RuntimeError("CUDA is required for Protean benchmark verification")
     torch.manual_seed(seed)
@@ -80,21 +88,24 @@ def make_inputs(n: int, dtype: str, seed: int, op: str) -> tuple[torch.Tensor, .
     raise ValueError(f"unknown op: {op}")
 
 
-def eager_elementwise_add_relu(x: torch.Tensor, y: torch.Tensor) -> torch.Tensor:
+def eager_elementwise_add_relu(x: Any, y: Any) -> Any:
+    assert torch is not None
     return torch.relu(x + y)
 
 
-def eager_rmsnorm(x: torch.Tensor, weight: torch.Tensor, eps: float = 1e-5) -> torch.Tensor:
+def eager_rmsnorm(x: Any, weight: Any, eps: float = 1e-5) -> Any:
+    assert torch is not None
     x_f32 = x.float()
     rms = torch.rsqrt(torch.mean(x_f32 * x_f32, dim=-1, keepdim=True) + eps)
     return (x_f32 * rms * weight.float()).to(dtype=x.dtype)
 
 
-def eager_softmax_rows(x: torch.Tensor) -> torch.Tensor:
+def eager_softmax_rows(x: Any) -> Any:
+    assert torch is not None
     return torch.softmax(x, dim=-1)
 
 
-def eager_fn_for_op(op: str):
+def eager_fn_for_op(op: str) -> Callable[..., Any]:
     if op == "elementwise_add_relu":
         return eager_elementwise_add_relu
     if op == "rmsnorm":
@@ -104,7 +115,7 @@ def eager_fn_for_op(op: str):
     raise ValueError(f"unknown op: {op}")
 
 
-def load_solution(src: str):
+def load_solution(src: str) -> types.ModuleType:
     _require_torch()
     temp_dir = Path(tempfile.gettempdir()) / "protean_candidates"
     temp_dir.mkdir(parents=True, exist_ok=True)
@@ -160,8 +171,8 @@ class _TritonLaunchCounter:
 
     def __init__(self) -> None:
         self.count = 0
-        self._knobs = None
-        self._prev_hook = None
+        self._knobs: Any | None = None
+        self._prev_hook: Any | None = None
         self._installed = False
         if triton is None:
             return
@@ -173,7 +184,7 @@ class _TritonLaunchCounter:
     def available(self) -> bool:
         return self._knobs is not None
 
-    def _hook(self, *args, **kwargs):
+    def _hook(self, *args: object, **kwargs: object) -> Any:
         self.count += 1
         if callable(self._prev_hook):
             return self._prev_hook(*args, **kwargs)
@@ -181,6 +192,7 @@ class _TritonLaunchCounter:
 
     def __enter__(self) -> _TritonLaunchCounter:
         if self.available():
+            assert self._knobs is not None
             try:
                 self._prev_hook = self._knobs.launch_enter_hook
                 self._knobs.launch_enter_hook = self._hook
@@ -190,8 +202,8 @@ class _TritonLaunchCounter:
                 self._installed = False
         return self
 
-    def __exit__(self, *exc) -> None:
-        if self._installed:
+    def __exit__(self, *exc: object) -> None:
+        if self._installed and self._knobs is not None:
             try:
                 self._knobs.launch_enter_hook = self._prev_hook
             except Exception:
@@ -200,7 +212,7 @@ class _TritonLaunchCounter:
         return None
 
 
-def _time_cuda_raw(fn, args: tuple[torch.Tensor, ...], reps: int, warmup: int) -> list[float]:
+def _time_cuda_raw(fn: Callable[..., Any], args: tuple[Any, ...], reps: int, warmup: int) -> list[float]:
     """Time ``fn`` over ``reps`` measured iterations and return the raw per-rep
     millisecond samples (after ``warmup`` discarded iterations).
 
@@ -212,6 +224,7 @@ def _time_cuda_raw(fn, args: tuple[torch.Tensor, ...], reps: int, warmup: int) -
     """
 
     _require_torch()
+    assert torch is not None
     times: list[float] = []
     props = torch.cuda.get_device_properties(torch.cuda.current_device())
     l2 = getattr(props, "l2_cache_size", 0) or (256 * 1024 * 1024)
@@ -231,11 +244,11 @@ def _time_cuda_raw(fn, args: tuple[torch.Tensor, ...], reps: int, warmup: int) -
     return times
 
 
-def _time_cuda(fn, args: tuple[torch.Tensor, ...], reps: int, warmup: int) -> float:
+def _time_cuda(fn: Callable[..., Any], args: tuple[Any, ...], reps: int, warmup: int) -> float:
     return statistics.median(_time_cuda_raw(fn, args, reps=reps, warmup=warmup))
 
 
-def _timing_stats(times: list[float]) -> dict:
+def _timing_stats(times: list[float]) -> dict[str, float]:
     """Distribution summary for a raw per-rep timing array (pure Python).
 
     Surfaces the median (the point estimate used for speedup) alongside the
@@ -338,7 +351,7 @@ def _bootstrap_speedup_ci(
     return (_pct(0.05), _pct(0.95))
 
 
-def _time_cuda_graph_raw(fn, args: tuple[torch.Tensor, ...], reps: int, warmup: int) -> list[float] | None:
+def _time_cuda_graph_raw(fn: Callable[..., Any], args: tuple[Any, ...], reps: int, warmup: int) -> list[float] | None:
     """CUDA-graph-captured replay timing for sub-10us kernels.
 
     For very fast kernels, per-launch CPU dispatch overhead dominates the CUDA
@@ -350,6 +363,7 @@ def _time_cuda_graph_raw(fn, args: tuple[torch.Tensor, ...], reps: int, warmup: 
     """
 
     _require_torch()
+    assert torch is not None
     if not torch.cuda.is_available() or not hasattr(torch.cuda, "CUDAGraph"):
         return None
     try:
@@ -382,7 +396,7 @@ def _time_cuda_graph_raw(fn, args: tuple[torch.Tensor, ...], reps: int, warmup: 
         return None
 
 
-def _is_strict_tensor(out) -> bool:
+def _is_strict_tensor(out: Any) -> bool:
     """True only if ``out`` is *exactly* torch.Tensor, not a subclass.
 
     Uses ``type(x) is torch.Tensor`` (identity), NOT isinstance, because a
@@ -403,8 +417,8 @@ def _is_strict_tensor(out) -> bool:
 
 
 def _check_correct_multi_init(
-    solution,
-    eager_fn,
+    solution: Callable[..., Any],
+    eager_fn: Callable[..., Any],
     *,
     n: int,
     spec: OpSpec,
@@ -418,6 +432,7 @@ def _check_correct_multi_init(
     dtype, shape, and values match the eager reference for all seeds.
     """
 
+    assert torch is not None
     for s in seeds:
         inputs = make_inputs(n, spec.dtype, seed=s, op=spec.name)
         out = solution(*inputs)
@@ -433,14 +448,14 @@ def _check_correct_multi_init(
     return True
 
 
-def _compute_ratio_from_events(events) -> float:
+def _compute_ratio_from_events(events: Any) -> float:
     triton_us = 0.0
     total_us = 0.0
     for event in events:
         duration = getattr(event, "self_cuda_time_total", None)
         if duration is None:
             duration = getattr(event, "cuda_time_total", 0.0)
-        if duration <= 0:
+        if duration is None or duration <= 0:
             continue
         total_us += float(duration)
         key = (getattr(event, "key", "") or "").lower()
@@ -451,9 +466,10 @@ def _compute_ratio_from_events(events) -> float:
     return max(0.0, min(triton_us / total_us, 1.0))
 
 
-def measure_pr_frac(solution, *, n: int, spec: OpSpec, iters: int = 10) -> float:
+def measure_pr_frac(solution: Callable[..., Any], *, n: int, spec: OpSpec, iters: int = 10) -> float:
     """Estimate Triton GPU time / total GPU time for the candidate."""
 
+    assert torch is not None
     from torch.profiler import ProfilerActivity, profile
 
     warm_inputs = make_inputs(n, spec.dtype, seed=99, op=spec.name)
@@ -478,13 +494,14 @@ def bench_source(
     spec: OpSpec,
     reps: int = 50,
     warmup: int = 10,
-) -> dict:
+) -> dict[str, Any]:
     _require_torch()
+    assert torch is not None
     module = load_solution(src)
     solution = module.solution
     eager_fn = eager_fn_for_op(spec.name)
 
-    def _non_tensor_result() -> dict:
+    def _non_tensor_result() -> dict[str, Any]:
         """Synthetic bench dict for a candidate that did not return a real
         torch.Tensor (FakeTensor / meta / subclass / non-tensor). We return
         early WITHOUT timing it: a fake tensor must never enter the timing loop

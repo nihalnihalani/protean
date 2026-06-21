@@ -10,7 +10,12 @@ def eager_fn(x: torch.Tensor, y: torch.Tensor) -> torch.Tensor:
     return torch.relu(x + y)
 
 
-def make_inputs(shape, seed: int, dtype=torch.float16, device="cuda"):
+def make_inputs(
+    shape: int | tuple[int, ...],
+    seed: int,
+    dtype: torch.dtype = torch.float16,
+    device: str = "cuda",
+) -> tuple[torch.Tensor, torch.Tensor]:
     """Fresh random inputs each grading call (defeats input-overfit)."""
     g = torch.Generator(device=device).manual_seed(seed)
     x = torch.randn(shape, generator=g, dtype=dtype, device=device)

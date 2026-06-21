@@ -88,3 +88,103 @@ jobs:
 
       - name: Ruff format check
         run: uv run ruff format --check .
+
+  typecheck:
+    name: typecheck (mypy)
+    runs-on: ubuntu-latest
+    needs: lockfile
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+          cache-dependency-glob: "uv.lock"
+
+      # Pinned dev tooling (mypy) from the lockfile. The [tool.mypy] config in
+      # pyproject.toml is already strict (disallow_incomplete_defs, etc.).
+      # `--extra config` installs pydantic-settings so mypy type-checks the
+      # PREFERRED pydantic backend branch in src/protean/config.py, not just the
+      # dataclass fallback. Without it, _HAVE_PYDANTIC_SETTINGS is False at
+      # analysis time and the entire pydantic branch (field_validators, field
+      # types, the _load return type) becomes a dead branch mypy never sees,
+      # letting it silently drift from the pydantic-settings 2.x API.
+      - name: Install pinned dev tooling
+        run: uv sync --locked --no-default-groups --extra dev --extra config
+
+      # Gates on ZERO errors. The package source is fully annotated; GPU stubs
+      # (torch/triton/numpy/hud) are covered by the [[tool.mypy.overrides]]
+      # ignore_missing_imports block, not a global flag.
+      #
+      # SCOPE NOTE: this is a CPU-only env. torch/triton are NOT installed, so
+      # their types are erased to Any via ignore_missing_imports. Consequently
+      # this gate catches STRUCTURAL annotation errors (bad kwargs, missing
+      # returns, union-attr/None bugs) only -- it does NOT verify GPU tensor
+      # inputs/outputs (torch.Tensor, triton.runtime.*) are correctly typed.
+      # Treat "zero mypy errors" as a structural signal, not full type safety.
+      - name: mypy (must reach zero errors)
+        run: uv run python -m mypy src/protean
+
+  coverage:
+    name: coverage gate
+    runs-on: ubuntu-latest
+    needs: lockfile
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+          cache-dependency-glob: "uv.lock"
+
+      # Dev extra carries pytest-cov + hypothesis. CPU-only: GPU deps live
+      # under the `gpu` extra and are never installed here.
+      - name: Install pinned dev tooling
+        run: uv sync --locked --no-default-groups --extra dev
+
+      # Branch coverage with a tight ratchet floor. --cov-fail-under overrides
+      # the [tool.coverage.report] fail_under so CI is STRICTER than the local
+      # dev floor: measured branch coverage in this exact env is ~71%, so the
+      # gate is pinned just below it. RATCHET RULE: raise this integer whenever
+      # coverage improves; NEVER lower it. GPU-only paths are omitted in
+      # pyproject.toml.
+      - name: Run tests with branch coverage gate
+        run: uv run python -m pytest --cov=src/protean --cov-report=term-missing --cov-fail-under=70
+
+  audit:
+    name: security (pip-audit / OSV)
+    runs-on: ubuntu-latest
+    needs: lockfile
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+          cache-dependency-glob: "uv.lock"
+
+      # pip-audit (in the dev extra) scans the resolved environment against the
+      # OSV advisory database and exits non-zero on any known vulnerability.
+      # This installs ONLY the `dev` extra (no `hud`/`gpu`), so the audited tree
+      # is exactly the CPU CI toolchain; uv provisions a current, patched pip.
+      # Verified clean on the current lockfile (0 findings, 2026-06).
+      - name: Install pinned dev tooling
+        run: uv sync --locked --no-default-groups --extra dev
+
+      # --ignore-vuln allowlist for advisories that are UNFIXABLE BY US because
+      # the affected package is an exact upstream pin we cannot move:
+      #   * hud-python 0.6.x hard-pins `fastmcp==3.0.2` (Requires-Dist:
+      #     fastmcp==3.0.2). The fix is fastmcp>=3.2.0, but bumping it would
+      #     violate that pin and break the `hud` extra. fastmcp is NOT installed
+      #     in this `dev`-only audit env, so these are belt-and-suspenders: they
+      #     only apply if the audit scope is ever broadened to include `hud`.
+      #     Re-evaluate when hud-python relaxes the fastmcp pin.
+      - name: Audit dependencies against OSV
+        run: |
+          uv run pip-audit --vulnerability-service osv \
+            --ignore-vuln CVE-2025-64340 \
+            --ignore-vuln CVE-2026-27124 \
+            --ignore-vuln CVE-2026-32871

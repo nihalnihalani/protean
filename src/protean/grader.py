@@ -7,7 +7,8 @@ import logging
 import os
 import time
 import uuid
-from typing import Any
+from dataclasses import dataclass
+from typing import Any, Protocol, cast
 
 from protean.anti_hack import ast_clean, contains_triton_jit
 from protean.rewards import DEFAULT_CONFIG, RewardConfig, compute_reward, load_reward_config
@@ -216,7 +217,76 @@ def grade_source(
     return result
 
 
-def to_eval_result(grade_dict: dict):
+# Structural contracts for the HUD evaluation classes. Declaring them as
+# Protocols (rather than erasing both names to ``Any`` via ``tuple[Any, Any]``)
+# lets mypy type-check every kwarg passed to ``SubScore(...)`` and
+# ``EvaluationResult(...)`` in ``to_eval_result`` -- a keyword typo, a wrong
+# value type, or a missing field is now a mypy error instead of a silent pass.
+# Both the real ``hud.graders`` classes and the local dataclass fallback satisfy
+# these structurally, so no runtime behaviour changes.
+
+
+class _SubScoreProto(Protocol):
+    name: str
+    value: float
+    weight: float
+
+
+class _SubScoreFactory(Protocol):
+    def __call__(self, *, name: str, value: float, weight: float) -> _SubScoreProto: ...
+
+
+class _EvalResultProto(Protocol):
+    reward: float
+    subscores: list[Any]
+    info: dict[str, Any]
+
+
+class _EvalResultFactory(Protocol):
+    def __call__(self, *, reward: float, subscores: list[Any], info: dict[str, Any]) -> _EvalResultProto: ...
+
+
+# Local dataclass stand-ins used only when HUD is not installed. Defined at module
+# scope (not inside the resolver) so they are never redefined -- eliminating the
+# ``no-redef`` suppressions the in-function fallback previously required.
+
+
+@dataclass
+class _FallbackSubScore:
+    name: str
+    value: float
+    weight: float
+
+
+@dataclass
+class _FallbackEvalResult:
+    reward: float
+    subscores: list[Any]
+    info: dict[str, Any]
+
+
+def _eval_result_classes() -> tuple[_EvalResultFactory, _SubScoreFactory]:
+    """Resolve (EvaluationResult, SubScore), falling back to local dataclasses.
+
+    Returns the HUD classes when ``hud.graders`` is importable, otherwise the
+    module-level fallback dataclasses. Both satisfy the factory Protocols, so the
+    call site in ``to_eval_result`` is fully type-checked.
+    """
+    try:
+        from hud.graders import EvaluationResult, SubScore
+    except Exception:  # pragma: no cover - local tests should not require HUD.
+        return _FallbackEvalResult, _FallbackSubScore
+
+    # hud.graders is ignore_missing_imports in CI (HUD not installed), so mypy
+    # erases EvaluationResult/SubScore to Any and cannot confirm they satisfy the
+    # factory Protocols structurally. The local fallback dataclasses define the
+    # ground-truth shape (reward/subscores/info and name/value/weight); the real
+    # HUD classes are constructed with exactly these kwargs throughout the SDK, so
+    # the cast is honest. It restores Protocol typing for the call site below.
+    return cast("_EvalResultFactory", EvaluationResult), cast("_SubScoreFactory", SubScore)
+
+
+def to_eval_result(grade_dict: dict[str, Any]) -> Any:
     raw_reward = float(grade_dict["reward"])
     hud_reward = max(0.0, min(raw_reward / 2.0, 1.0))
     correct = bool(grade_dict.get("correct", False)) and not grade_dict.get("caps")
@@ -229,22 +299,7 @@ def to_eval_result(grade_dict: dict):
         "protean_reward_raw": raw_reward,
         "hud_reward_normalized": hud_reward,
     }
-    try:
-        from hud.graders import EvaluationResult, SubScore
-    except Exception:  # pragma: no cover - local tests should not require HUD.
-        from dataclasses import dataclass
-
-        @dataclass
-        class SubScore:
-            name: str
-            value: float
-            weight: float
-
-        @dataclass
-        class EvaluationResult:
-            reward: float
-            subscores: list[SubScore]
-            info: dict
+    EvaluationResult, SubScore = _eval_result_classes()
 
     return EvaluationResult(
         reward=hud_reward,

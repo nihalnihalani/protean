@@ -4,13 +4,18 @@ from __future__ import annotations
 
 import json
 import os
+from collections.abc import AsyncGenerator
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any, get_args
 
-from protean.grader import grade_source, to_eval_result
-from protean.splits import shapes_for_split
+from protean.grader import ProteanValidationError, grade_source, to_eval_result
+from protean.splits import Split, shapes_for_split
 from protean.task_catalog import get_op
 
+if TYPE_CHECKING:
+    from hud import Environment as _Environment
+
+    Environment: type[_Environment] | None
 try:
     from hud import Environment
 except Exception:  # pragma: no cover - local tests should not require HUD.
@@ -25,6 +30,24 @@ HUD_TASKS = (
     {"id": "softmax_rows_train", "op": "softmax_rows", "split": "train"},
     {"id": "softmax_rows_held_out", "op": "softmax_rows", "split": "held_out"},
 )
+
+
+def _as_split(split: str) -> Split:
+    """Validate a public ``str`` split at the boundary and narrow it to ``Split``.
+
+    The public wrappers accept ``split: str`` (no public-API drift), but the
+    downstream consumers (``shapes_for_split``/``grade_source``) require the
+    ``Split`` literal. Guard here so a bad value raises the typed
+    ``ProteanValidationError`` from the grader's error hierarchy rather than a
+    bare ``ValueError`` deep inside ``shapes_for_split``. After the membership
+    check mypy narrows ``split`` to ``Split`` on the return path, so no ``cast``
+    is needed.
+    """
+
+    valid: tuple[Split, ...] = get_args(Split)
+    if split not in valid:
+        raise ProteanValidationError(f"split {split!r} must be 'train' or 'held_out'")
+    return split
 
 
 def configure_triton_cache_dir() -> str:
@@ -58,7 +81,7 @@ def _read_prompt(op: str) -> str:
 
 
 def hud_prompt(op: str, split: str, shape: int | None = None) -> str:
-    shape = shape or shapes_for_split(split)[0]
+    shape = shape or shapes_for_split(_as_split(split))[0]
     return (
         _read_prompt(op)
         + "\n\n"
@@ -71,8 +94,9 @@ def hud_prompt(op: str, split: str, shape: int | None = None) -> str:
 
 
 def grade_hud_source(source: str, *, op: str, split: str, shape: int | None = None) -> dict[str, Any]:
-    shape = shape or shapes_for_split(split)[0]
-    grade = grade_source(source or "", op=op, split=split, shape=shape)
+    split_lit = _as_split(split)
+    shape = shape or shapes_for_split(split_lit)[0]
+    grade = grade_source(source or "", op=op, split=split_lit, shape=shape)
     return {
         **grade,
         "hud": {
@@ -93,7 +117,7 @@ def grade_hud_source(source: str, *, op: str, split: str, shape: int | None = No
 def task_metadata() -> list[dict[str, Any]]:
     rows = []
     for task in HUD_TASKS:
-        split = task["split"]
+        split = _as_split(task["split"])
         rows.append(
             {
                 **task,
@@ -116,7 +140,10 @@ def _make_env():
 env = _make_env()
 
 
-def _template(template_id: str):
+def _template(template_id: str) -> Any:
+    # The concrete return type is HUD's opaque template decorator; hud.* has no
+    # stubs (ignore_missing_imports), so this is annotated as Any.
+    assert env is not None
     try:
         return env.template(id=template_id)
     except TypeError:  # pragma: no cover - compatibility with older local HUD builds.
@@ -126,19 +153,19 @@ def _template(template_id: str):
 if env is not None:
 
     @_template("elementwise_add_relu")
-    async def elementwise_add_relu(split: str = "train", shape: int | None = None):
+    async def elementwise_add_relu(split: str = "train", shape: int | None = None) -> AsyncGenerator[Any, str | None]:
         get_op("elementwise_add_relu")
         source = yield hud_prompt("elementwise_add_relu", split, shape)
         yield to_eval_result(grade_hud_source(source or "", op="elementwise_add_relu", split=split, shape=shape))
 
     @_template("rmsnorm")
-    async def rmsnorm(split: str = "train", shape: int | None = None):
+    async def rmsnorm(split: str = "train", shape: int | None = None) -> AsyncGenerator[Any, str | None]:
         get_op("rmsnorm")
         source = yield hud_prompt("rmsnorm", split, shape)
         yield to_eval_result(grade_hud_source(source or "", op="rmsnorm", split=split, shape=shape))
 
     @_template("softmax_rows")
-    async def softmax_rows(split: str = "train", shape: int | None = None):
+    async def softmax_rows(split: str = "train", shape: int | None = None) -> AsyncGenerator[Any, str | None]:
         get_op("softmax_rows")
         source = yield hud_prompt("softmax_rows", split, shape)
         yield to_eval_result(grade_hud_source(source or "", op="softmax_rows", split=split, shape=shape))

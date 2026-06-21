@@ -40,12 +40,18 @@ hud = [
 ]
 test = [
     "pytest>=7",
+    "hypothesis>=6.100",
 ]
 dev = [
     "pytest>=7",
     "pytest-cov>=5",
+    "hypothesis>=6.100",
+    "pip-audit>=2.7",
     "ruff>=0.9",
     "mypy>=1.13",
+]
+config = [
+    "pydantic-settings>=2.5",
 ]
 train = [
     "trl",
@@ -72,6 +78,29 @@ filterwarnings = [
 ]
 
 # Ruff configuration lives in the dedicated `ruff.toml` at the repo root.
+
+[tool.coverage.run]
+# Measure only the package source. Branch coverage catches untaken branches
+# that statement coverage would otherwise score as covered.
+source = ["src/protean"]
+branch = true
+omit = [
+    # Grader internals are GPU-only and never exercised in CPU CI.
+    "src/protean/tasks/*/donotaccess/*",
+]
+
+[tool.coverage.report]
+show_missing = true
+skip_empty = true
+# Ratchet floor: set AT OR BELOW the current measured branch coverage (~69%)
+# so the baseline build stays green. Raise this as coverage improves; the
+# CLI --cov-fail-under flag in CI can tighten independently of this default.
+fail_under = 65
+exclude_lines = [
+    "pragma: no cover",
+    "if TYPE_CHECKING:",
+    "raise NotImplementedError",
+]
 
 [tool.mypy]
 python_version = "3.11"

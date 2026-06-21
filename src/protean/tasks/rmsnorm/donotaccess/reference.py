@@ -9,7 +9,12 @@ def eager_fn(x: torch.Tensor, weight: torch.Tensor) -> torch.Tensor:
     return (x_f32 * rms * weight.float()).to(dtype=x.dtype)
 
 
-def make_inputs(shape, seed: int, dtype=torch.float16, device="cuda"):
+def make_inputs(
+    shape: int | tuple[int, ...],
+    seed: int,
+    dtype: torch.dtype = torch.float16,
+    device: str = "cuda",
+) -> tuple[torch.Tensor, torch.Tensor]:
     g = torch.Generator(device=device).manual_seed(seed)
     x = torch.randn(shape, generator=g, dtype=dtype, device=device)
     weight = torch.randn(shape, generator=g, dtype=dtype, device=device)
