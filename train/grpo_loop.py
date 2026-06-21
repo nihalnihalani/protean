@@ -346,10 +346,57 @@ def main():
         cal_result = calibrate(TASKS, base_model_runner=base_runner)
         print(f"[protean] Calibration Stage A/B result: {cal_result}")
     
+    import json as _json
+    import pathlib as _pathlib
+    import time as _time
+
+    _STATUS_PATH = _pathlib.Path(os.environ.get("PROTEAN_OUTPUT_DIR", ".")) / "training_status.json"
+
     class StepTrackerCallback(TrainerCallback):
         def on_step_end(self, args, state, control, **kwargs):
             STEP_REF[0] = state.global_step
-            
+
+            # Collect the latest train reward from the log history if available
+            reward = None
+            for entry in reversed(state.log_history):
+                if "reward" in entry:
+                    reward = entry["reward"]
+                    break
+
+            status = {
+                "status": "training",
+                "step": state.global_step,
+                "max_steps": state.max_steps,
+                "reward": round(float(reward), 4) if reward is not None else None,
+                "epoch": round(float(state.epoch or 0), 3),
+                "timestamp": _time.strftime("%Y-%m-%dT%H:%M:%SZ", _time.gmtime()),
+            }
+            try:
+                _STATUS_PATH.parent.mkdir(parents=True, exist_ok=True)
+                _STATUS_PATH.write_text(_json.dumps(status))
+            except Exception as _e:
+                print(f"[protean] WARNING: could not write training_status.json: {_e}")
+
+        def on_train_end(self, args, state, control, **kwargs):
+            reward = None
+            for entry in reversed(state.log_history):
+                if "reward" in entry:
+                    reward = entry["reward"]
+                    break
+            status = {
+                "status": "done",
+                "step": state.global_step,
+                "max_steps": state.max_steps,
+                "reward": round(float(reward), 4) if reward is not None else None,
+                "epoch": round(float(state.epoch or 0), 3),
+                "timestamp": _time.strftime("%Y-%m-%dT%H:%M:%SZ", _time.gmtime()),
+            }
+            try:
+                _STATUS_PATH.write_text(_json.dumps(status))
+            except Exception as _e:
+                print(f"[protean] WARNING: could not write training_status.json: {_e}")
+
+
     trainer.add_callback(StepTrackerCallback())
     
     print("Starting training loop...")

@@ -91,15 +91,15 @@
   <div class="live-stats">
     <div class="live-stat">
       <span class="live-stat-label">Status</span>
-      <span class="live-stat-value" style="color: #6bbfff;">TRAINING</span>
+      <span class="live-stat-value" id="live-status" style="color: #6bbfff;">TRAINING</span>
     </div>
     <div class="live-stat">
       <span class="live-stat-label">Current Step</span>
-      <span class="live-stat-value">7 / 10</span>
+      <span class="live-stat-value" id="live-step">7 / 10</span>
     </div>
     <div class="live-stat">
       <span class="live-stat-label">Current Reward</span>
-      <span class="live-stat-value">0.41</span>
+      <span class="live-stat-value" id="live-reward">0.41</span>
     </div>
     <div class="live-stat">
       <span class="live-stat-label">GPU</span>
@@ -343,6 +343,43 @@
   <div class="moat-item"><span class="check">✓</span> Manifest SHA256 pinned in code — eval set is frozen and provable</div>
   <div class="moat-item"><span class="check">✓</span> Triton launches counted via torch.profiler — fake kernels score 0</div>
 </div>
+
+<script>
+// Live polling — reads training_status.json written by StepTrackerCallback
+// every 5 seconds and updates the banner values in place.
+(function () {
+  const STATUS_FILE = 'training_status.json';
+  const POLL_MS = 5000;
+
+  const elStatus = document.getElementById('live-status');
+  const elStep   = document.getElementById('live-step');
+  const elReward = document.getElementById('live-reward');
+
+  function applyStatus(d) {
+    const isDone = d.status === 'done';
+    elStatus.textContent = isDone ? 'DONE' : 'TRAINING';
+    elStatus.style.color = isDone ? '#6bff9a' : '#6bbfff';
+    elStep.textContent   = `${d.step} / ${d.max_steps}`;
+    elReward.textContent = d.reward !== null ? d.reward.toFixed(2) : '—';
+  }
+
+  async function poll() {
+    try {
+      const res = await fetch(`${STATUS_FILE}?_=${Date.now()}`);
+      if (!res.ok) return; // file not yet written
+      const d = await res.json();
+      applyStatus(d);
+    } catch (e) {
+      // Silently ignore — file may not exist yet or CORS on file://
+      console.debug('[protean] training_status.json not available:', e.message);
+    }
+  }
+
+  // Poll immediately then every POLL_MS
+  poll();
+  setInterval(poll, POLL_MS);
+})();
+</script>
 
 </body>
 </html>
