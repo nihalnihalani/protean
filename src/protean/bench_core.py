@@ -7,6 +7,7 @@ import statistics
 import tempfile
 import uuid
 import importlib.util
+import math
 import sys
 from pathlib import Path
 
@@ -66,6 +67,35 @@ def make_inputs(n: int, dtype: str, seed: int, op: str) -> tuple[torch.Tensor, .
         # Shape: (64, n) where n is the columns size. Scale by 2.0 as in reference.py
         x = torch.randn((64, n), device="cuda", dtype=torch_dtype) * 2.0
         return (x,)
+    if op == "matmul_tile":
+        a = torch.randn((16, n), device="cuda", dtype=torch_dtype)
+        b = torch.randn((n, 16), device="cuda", dtype=torch_dtype)
+        return a, b
+    if op == "attention_softmax":
+        # A row-wise attention probability block: softmax over each query row.
+        scores = torch.randn((64, n), device="cuda", dtype=torch_dtype) * 2.0
+        return (scores,)
+    if op == "layernorm":
+        weight = torch.randn((n,), device="cuda", dtype=torch_dtype)
+        bias = torch.randn((n,), device="cuda", dtype=torch_dtype)
+        return x, weight, bias
+    if op == "fused_mlp":
+        gate = torch.randn((n,), device="cuda", dtype=torch_dtype)
+        bias = torch.randn((n,), device="cuda", dtype=torch_dtype)
+        return x, gate, bias
+    if op == "quantize_dequant":
+        return (x,)
+    if op == "moe_routing":
+        logits = torch.randn((64, n), device="cuda", dtype=torch_dtype)
+        return (logits,)
+    if op == "embedding_lookup":
+        table = torch.randn((n, 32), device="cuda", dtype=torch_dtype)
+        indices = torch.randint(0, n, (64,), device="cuda", dtype=torch.int64)
+        return table, indices
+    if op == "sum_reduction":
+        return (x,)
+    if op == "prefix_scan":
+        return (x,)
     raise ValueError(f"unknown op: {op}")
 
 
@@ -83,13 +113,64 @@ def eager_softmax_rows(x: torch.Tensor) -> torch.Tensor:
     return torch.softmax(x, dim=-1)
 
 
+def eager_matmul_tile(a: torch.Tensor, b: torch.Tensor) -> torch.Tensor:
+    return torch.matmul(a, b)
+
+
+def eager_attention_softmax(scores: torch.Tensor) -> torch.Tensor:
+    return torch.softmax(scores, dim=-1)
+
+
+def eager_layernorm(x: torch.Tensor, weight: torch.Tensor, bias: torch.Tensor, eps: float = 1e-5) -> torch.Tensor:
+    x_f32 = x.float()
+    mean = torch.mean(x_f32, dim=-1, keepdim=True)
+    variance = torch.mean((x_f32 - mean) * (x_f32 - mean), dim=-1, keepdim=True)
+    out = (x_f32 - mean) * torch.rsqrt(variance + eps)
+    return (out * weight.float() + bias.float()).to(dtype=x.dtype)
+
+
+def eager_fused_mlp(x: torch.Tensor, gate: torch.Tensor, bias: torch.Tensor) -> torch.Tensor:
+    return torch.relu(x * gate + bias)
+
+
+def eager_quantize_dequant(x: torch.Tensor, scale: float = 0.1) -> torch.Tensor:
+    q = torch.clamp(torch.round(x.float() / scale), -127, 127)
+    return (q * scale).to(dtype=x.dtype)
+
+
+def eager_moe_routing(logits: torch.Tensor) -> torch.Tensor:
+    return torch.max(logits, dim=-1).values
+
+
+def eager_embedding_lookup(table: torch.Tensor, indices: torch.Tensor) -> torch.Tensor:
+    return table[indices]
+
+
+def eager_sum_reduction(x: torch.Tensor) -> torch.Tensor:
+    return torch.sum(x.float()).reshape(1)
+
+
+def eager_prefix_scan(x: torch.Tensor) -> torch.Tensor:
+    return torch.cumsum(x.float(), dim=0).to(dtype=x.dtype)
+
+
 def eager_fn_for_op(op: str):
-    if op == "elementwise_add_relu":
-        return eager_elementwise_add_relu
-    if op == "rmsnorm":
-        return eager_rmsnorm
-    if op == "softmax_rows":
-        return eager_softmax_rows
+    eager_fns = {
+        "elementwise_add_relu": eager_elementwise_add_relu,
+        "rmsnorm": eager_rmsnorm,
+        "softmax_rows": eager_softmax_rows,
+        "matmul_tile": eager_matmul_tile,
+        "attention_softmax": eager_attention_softmax,
+        "layernorm": eager_layernorm,
+        "fused_mlp": eager_fused_mlp,
+        "quantize_dequant": eager_quantize_dequant,
+        "moe_routing": eager_moe_routing,
+        "embedding_lookup": eager_embedding_lookup,
+        "sum_reduction": eager_sum_reduction,
+        "prefix_scan": eager_prefix_scan,
+    }
+    if op in eager_fns:
+        return eager_fns[op]
     raise ValueError(f"unknown op: {op}")
 
 

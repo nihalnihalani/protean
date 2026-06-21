@@ -1,6 +1,7 @@
 import types
 
 from scripts import run_hud_optimizer_agent as agent
+from protean.task_catalog import OPS
 
 
 def test_hud_optimizer_agent_reuses_one_session_for_all_ops(monkeypatch, tmp_path):
@@ -41,11 +42,7 @@ def test_hud_optimizer_agent_reuses_one_session_for_all_ops(monkeypatch, tmp_pat
     )
 
     assert result == 0
-    assert [call["op"] for call in calls["runs"]] == [
-        "elementwise_add_relu",
-        "rmsnorm",
-        "softmax_rows",
-    ]
+    assert [call["op"] for call in calls["runs"]] == [op.name for op in OPS]
     assert all(call["hud_session"] is session for call in calls["runs"])
     assert all(call["stream_hud"] is True for call in calls["runs"])
     assert all(call["hud_group"] == 2 for call in calls["runs"])

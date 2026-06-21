@@ -1,18 +1,13 @@
 from protean.env import HUD_TASKS, grade_hud_source, hud_prompt, task_metadata
 from protean.grader import to_eval_result
 from protean.kernels import PYTORCH_PASSTHROUGH
+from protean.task_catalog import OPS
 
 
-def test_hud_exposes_six_task_ids():
+def test_hud_exposes_task_ids_for_every_registered_op():
     ids = {task["id"] for task in HUD_TASKS}
-    assert ids == {
-        "elementwise_add_relu_train",
-        "elementwise_add_relu_held_out",
-        "rmsnorm_train",
-        "rmsnorm_held_out",
-        "softmax_rows_train",
-        "softmax_rows_held_out",
-    }
+    expected = {f"{op.name}_{split}" for op in OPS for split in ("train", "held_out")}
+    assert ids == expected
 
 
 def test_hud_prompt_includes_metadata():
@@ -33,7 +28,7 @@ def test_hud_grade_metadata_contains_reward_fields():
 
 def test_task_metadata_lists_prompt_paths():
     rows = task_metadata()
-    assert len(rows) == 6
+    assert len(rows) == len(OPS) * 2
     assert all(row["prompt_path"].endswith("prompt.md") for row in rows)
 
 
@@ -82,19 +77,15 @@ def test_hud_registration_uses_name_api():
     try:
         env_mod.Environment = FakeEnvironment
         env_mod.env = env_mod._make_env()
-        decorator_add = env_mod._template("elementwise_add_relu")
-        decorator_rms = env_mod._template("rmsnorm")
-        decorator_softmax = env_mod._template("softmax_rows")
+        decorators = [env_mod._template(op.name) for op in OPS]
 
         def placeholder():
             return None
 
-        assert decorator_add(placeholder) is placeholder
-        assert decorator_rms(placeholder) is placeholder
-        assert decorator_softmax(placeholder) is placeholder
+        assert all(decorator(placeholder) is placeholder for decorator in decorators)
     finally:
         env_mod.Environment = original_environment
         env_mod.env = original_env
 
     assert calls["env_names"] == ["protean"]
-    assert calls["template_ids"] == ["elementwise_add_relu", "rmsnorm", "softmax_rows"]
+    assert calls["template_ids"] == [op.name for op in OPS]

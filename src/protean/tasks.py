@@ -2,17 +2,18 @@
 
 import os
 
-from protean.env import (  # noqa: F401
-    elementwise_add_relu_held_out,
-    elementwise_add_relu_train,
-    env,
-    kernel_opt,
-    rmsnorm_held_out,
-    rmsnorm_train,
-    softmax_rows_held_out,
-    softmax_rows_train,
-)
+from protean import env as _env_mod
 from protean.manifest import build_manifest, load_frozen_manifest
+from protean.task_catalog import OPS
+
+env = _env_mod.env
+kernel_opt = _env_mod.kernel_opt
+
+for _op in OPS:
+    globals()[_op.name] = getattr(_env_mod, _op.name)
+    for _split in ("train", "held_out"):
+        _slug = f"{_op.name}_{_split}"
+        globals()[_slug] = getattr(_env_mod, _slug)
 
 MANIFEST_PATH = "manifest_v1.jsonl"
 MANIFEST_SHA256 = "a5771e24f78b44d3a3406fb13e6342cdede382b8a634a56177a5db25ef666ed1"

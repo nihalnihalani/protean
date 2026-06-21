@@ -9,7 +9,7 @@ from typing import Any
 
 from protean.grader import grade_source, to_eval_result
 from protean.splits import shapes_for_split
-from protean.task_catalog import get_op
+from protean.task_catalog import OPS, get_op
 
 try:
     from hud import Environment
@@ -17,13 +17,10 @@ except Exception:  # pragma: no cover - local tests should not require HUD.
     Environment = None
 
 
-HUD_TASKS = (
-    {"id": "elementwise_add_relu_train", "op": "elementwise_add_relu", "split": "train"},
-    {"id": "elementwise_add_relu_held_out", "op": "elementwise_add_relu", "split": "held_out"},
-    {"id": "rmsnorm_train", "op": "rmsnorm", "split": "train"},
-    {"id": "rmsnorm_held_out", "op": "rmsnorm", "split": "held_out"},
-    {"id": "softmax_rows_train", "op": "softmax_rows", "split": "train"},
-    {"id": "softmax_rows_held_out", "op": "softmax_rows", "split": "held_out"},
+HUD_TASKS = tuple(
+    {"id": f"{op.name}_{split}", "op": op.name, "split": split}
+    for op in OPS
+    for split in ("train", "held_out")
 )
 
 
@@ -125,51 +122,29 @@ def _template(template_id: str):
 
 if env is not None:
 
-    @_template("elementwise_add_relu")
-    async def elementwise_add_relu(split: str = "train", shape: int | None = None):
-        get_op("elementwise_add_relu")
-        source = yield hud_prompt("elementwise_add_relu", split, shape)
-        yield to_eval_result(grade_hud_source(source or "", op="elementwise_add_relu", split=split, shape=shape))
+    def _register_op_template(op_name: str):
+        @_template(op_name)
+        async def _op_template(split: str = "train", shape: int | None = None):
+            get_op(op_name)
+            source = yield hud_prompt(op_name, split, shape)
+            yield to_eval_result(grade_hud_source(source or "", op=op_name, split=split, shape=shape))
 
-    @_template("rmsnorm")
-    async def rmsnorm(split: str = "train", shape: int | None = None):
-        get_op("rmsnorm")
-        source = yield hud_prompt("rmsnorm", split, shape)
-        yield to_eval_result(grade_hud_source(source or "", op="rmsnorm", split=split, shape=shape))
+        _op_template.__name__ = op_name
+        _op_template.__qualname__ = op_name
+        return _op_template
 
-    @_template("softmax_rows")
-    async def softmax_rows(split: str = "train", shape: int | None = None):
-        get_op("softmax_rows")
-        source = yield hud_prompt("softmax_rows", split, shape)
-        yield to_eval_result(grade_hud_source(source or "", op="softmax_rows", split=split, shape=shape))
-
-    elementwise_add_relu_train = elementwise_add_relu(split="train")
-    elementwise_add_relu_train.slug = "elementwise_add_relu_train"
-    elementwise_add_relu_train.columns = {"op": "elementwise_add_relu", "split": "train"}
-
-    elementwise_add_relu_held_out = elementwise_add_relu(split="held_out")
-    elementwise_add_relu_held_out.slug = "elementwise_add_relu_held_out"
-    elementwise_add_relu_held_out.columns = {"op": "elementwise_add_relu", "split": "held_out"}
-
-    rmsnorm_train = rmsnorm(split="train")
-    rmsnorm_train.slug = "rmsnorm_train"
-    rmsnorm_train.columns = {"op": "rmsnorm", "split": "train"}
-
-    rmsnorm_held_out = rmsnorm(split="held_out")
-    rmsnorm_held_out.slug = "rmsnorm_held_out"
-    rmsnorm_held_out.columns = {"op": "rmsnorm", "split": "held_out"}
-
-    softmax_rows_train = softmax_rows(split="train")
-    softmax_rows_train.slug = "softmax_rows_train"
-    softmax_rows_train.columns = {"op": "softmax_rows", "split": "train"}
-
-    softmax_rows_held_out = softmax_rows(split="held_out")
-    softmax_rows_held_out.slug = "softmax_rows_held_out"
-    softmax_rows_held_out.columns = {"op": "softmax_rows", "split": "held_out"}
+    for _op_spec in OPS:
+        _template_fn = _register_op_template(_op_spec.name)
+        globals()[_op_spec.name] = _template_fn
+        for _split in ("train", "held_out"):
+            _task_slug = f"{_op_spec.name}_{_split}"
+            _task = _template_fn(split=_split)
+            _task.slug = _task_slug
+            _task.columns = {"op": _op_spec.name, "split": _split}
+            globals()[_task_slug] = _task
 else:
-    elementwise_add_relu = {"id": "elementwise_add_relu", "op": "elementwise_add_relu"}
-    rmsnorm = {"id": "rmsnorm", "op": "rmsnorm"}
-    softmax_rows = {"id": "softmax_rows", "op": "softmax_rows"}
+    for _op_spec in OPS:
+        globals()[_op_spec.name] = {"id": _op_spec.name, "op": _op_spec.name}
     for _task_def in HUD_TASKS:
         globals()[_task_def["id"]] = dict(_task_def)
 
