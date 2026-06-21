@@ -25,14 +25,22 @@ CANONICAL_CONFIG_PATH = Path("/donotaccess/reward_config.json")
 LOCAL_CONFIG_PATH = Path(__file__).with_name("reward_config.json")
 
 # Backward compatibility aliases for tests
-_CANONICAL_CFG_PATH = str(CANONICAL_CONFIG_PATH)
+_CANONICAL_CFG_PATH = "/donotaccess/reward_config.json"
 _LOCAL_CFG_PATH = str(LOCAL_CONFIG_PATH)
 
 
 def _config_path() -> Path:
-    if Path(_CANONICAL_CFG_PATH).exists():
-        return Path(_CANONICAL_CFG_PATH)
-    return Path(_LOCAL_CFG_PATH)
+    # Try the canonical config first
+    canonical = CANONICAL_CONFIG_PATH if CANONICAL_CONFIG_PATH is not None else Path(_CANONICAL_CFG_PATH)
+    if canonical.exists():
+        return canonical
+    # Fallback to local/dev config
+    local = LOCAL_CONFIG_PATH if LOCAL_CONFIG_PATH is not None else Path(_LOCAL_CFG_PATH)
+    # Check if string-based backward compatibility path was monkeypatched
+    default_local_str = str(Path(__file__).with_name("reward_config.json"))
+    if _LOCAL_CFG_PATH != default_local_str:
+        local = Path(_LOCAL_CFG_PATH)
+    return local
 
 
 def _cfg() -> dict[str, Any]:
@@ -94,7 +102,7 @@ def compute_reward(
     if not shape_ok:
         caps.append("shape_mismatch")
     if launches_timed <= 0 and not caps:
-        caps.append("no_triton_jit")
+        caps.append("no_triton_launch")
 
     hard_failed = bool(caps)
     speedup_reward = 0.0
