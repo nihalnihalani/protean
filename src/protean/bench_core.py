@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import random
 import statistics
 import tempfile
 import uuid
@@ -170,7 +171,17 @@ class _TritonLaunchCounter:
         return None
 
 
-def _time_cuda(fn, args: tuple[torch.Tensor, ...], reps: int, warmup: int) -> float:
+def _time_cuda_raw(fn, args: tuple[torch.Tensor, ...], reps: int, warmup: int) -> list[float]:
+    """Time ``fn`` over ``reps`` measured iterations and return the raw per-rep
+    millisecond samples (after ``warmup`` discarded iterations).
+
+    Returning the full sample array (rather than only the median) lets callers
+    compute distribution statistics -- CV for measurement-noise flagging and a
+    bootstrap confidence interval on the speedup ratio. Each rep flushes the L2
+    cache so that back-to-back launches do not benefit from a warm cache, which
+    is standard practice for high-fidelity kernel benchmarking.
+    """
+
     _require_torch()
     times: list[float] = []
     props = torch.cuda.get_device_properties(torch.cuda.current_device())
@@ -188,7 +199,189 @@ def _time_cuda(fn, args: tuple[torch.Tensor, ...], reps: int, warmup: int) -> fl
         if i >= warmup:
             times.append(start.elapsed_time(end))
 
-    return statistics.median(times)
+    return times
+
+
+def _time_cuda(fn, args: tuple[torch.Tensor, ...], reps: int, warmup: int) -> float:
+    return statistics.median(_time_cuda_raw(fn, args, reps=reps, warmup=warmup))
+
+
+def _timing_stats(times: list[float]) -> dict:
+    """Distribution summary for a raw per-rep timing array (pure Python).
+
+    Surfaces the median (the point estimate used for speedup) alongside the
+    coefficient of variation, IQR, and a 10%-trimmed mean. A high CV means the
+    measurement was noisy and the resulting speedup should be treated with
+    suspicion by downstream RL -- a noise-aware signal that a bare median hides.
+    """
+
+    if not times:
+        return {
+            "median_ms": 0.0,
+            "mean_ms": 0.0,
+            "cv": 0.0,
+            "iqr_ms": 0.0,
+            "trimmed_mean_ms": 0.0,
+        }
+    ordered = sorted(times)
+    n = len(ordered)
+    median = statistics.median(ordered)
+    mean = statistics.fmean(ordered)
+    # Sample stdev (N-1 denominator) so the reported CV matches the standard
+    # Coefficient-of-Variation definition used by kernel-benchmarking noise
+    # thresholds (e.g. CV>0.05 = suspicious). pstdev (N-denominator) would
+    # under-report noise for the small rep counts used here.
+    stdev = statistics.stdev(ordered) if n > 1 else 0.0
+    cv = stdev / mean if mean > 0 else 0.0
+
+    def _quantile(p: float) -> float:
+        if n == 1:
+            return ordered[0]
+        pos = p * (n - 1)
+        lo = int(pos)
+        hi = min(lo + 1, n - 1)
+        frac = pos - lo
+        return ordered[lo] * (1.0 - frac) + ordered[hi] * frac
+
+    iqr = _quantile(0.75) - _quantile(0.25)
+    trim = int(n * 0.1)
+    trimmed = ordered[trim : n - trim] if n - 2 * trim > 0 else ordered
+    trimmed_mean = statistics.fmean(trimmed)
+    return {
+        "median_ms": float(median),
+        "mean_ms": float(mean),
+        "cv": float(cv),
+        "iqr_ms": float(iqr),
+        "trimmed_mean_ms": float(trimmed_mean),
+    }
+
+
+def _bootstrap_speedup_ci(
+    eager_times: list[float],
+    kernel_times: list[float],
+    *,
+    b: int = 1000,
+    seed: int = 1234,
+) -> tuple[float, float]:
+    """Percentile bootstrap CI for the speedup ratio (eager / kernel).
+
+    Pure Python (no numpy) to match the bootstrap style already used in
+    eval_protocol.hierarchical_bootstrap_ci. Eager and kernel reps are measured
+    sequentially on the same GPU, so their measurement noise (thermal/driver/L2
+    state) is positively correlated. When the two arrays are equal-length (the
+    bench_source case -- both use ``reps``) we treat them as paired and bootstrap
+    the per-rep ratio eager[i]/kernel[i]; this preserves the pairing instead of
+    breaking it with independent resampling (which would inflate the interval).
+    When lengths differ we fall back to independent resampling of each array.
+    Returns the (p05, p95) percentiles of the bootstrapped mean ratio; a wide
+    interval signals that a headline speedup is not statistically robust.
+    """
+
+    if not eager_times or not kernel_times:
+        return (0.0, 0.0)
+    rng = random.Random(seed)
+    ratios: list[float] = []
+    if len(eager_times) == len(kernel_times):
+        # Paired bootstrap: resample rep indices jointly so correlated noise
+        # cancels in the per-rep ratio (matched-pairs design).
+        per_rep = [e / max(k, 1e-9) for e, k in zip(eager_times, kernel_times)]
+        n = len(per_rep)
+        for _ in range(b):
+            total = 0.0
+            for _ in range(n):
+                total += per_rep[rng.randrange(n)]
+            ratios.append(total / n)
+    else:
+        ne = len(eager_times)
+        nk = len(kernel_times)
+        for _ in range(b):
+            e = sorted(eager_times[rng.randrange(ne)] for _ in range(ne))
+            k = sorted(kernel_times[rng.randrange(nk)] for _ in range(nk))
+            e_med = e[ne // 2] if ne % 2 else 0.5 * (e[ne // 2 - 1] + e[ne // 2])
+            k_med = k[nk // 2] if nk % 2 else 0.5 * (k[nk // 2 - 1] + k[nk // 2])
+            ratios.append(e_med / max(k_med, 1e-9))
+    ratios.sort()
+
+    def _pct(p: float) -> float:
+        idx = min(b - 1, max(0, int(round(p * (b - 1)))))
+        return ratios[idx]
+
+    return (_pct(0.05), _pct(0.95))
+
+
+def _time_cuda_graph_raw(
+    fn, args: tuple[torch.Tensor, ...], reps: int, warmup: int
+) -> list[float] | None:
+    """CUDA-graph-captured replay timing for sub-10us kernels.
+
+    For very fast kernels, per-launch CPU dispatch overhead dominates the CUDA
+    event window and inflates the measured time. Capturing the call in a CUDA
+    graph and timing graph *replay* removes that overhead (do_bench_cudagraph
+    pattern). Returns the raw per-rep samples, or ``None`` when CUDA graphs are
+    unavailable or capture fails -- callers then fall back to event timing with
+    no behavior change. This path requires CUDA; on CPU it returns None.
+    """
+
+    _require_torch()
+    if not torch.cuda.is_available() or not hasattr(torch.cuda, "CUDAGraph"):
+        return None
+    try:
+        # Warm up on a side stream so capture sees a clean state.
+        stream = torch.cuda.Stream()
+        stream.wait_stream(torch.cuda.current_stream())
+        with torch.cuda.stream(stream):
+            for _ in range(max(warmup, 3)):
+                fn(*args)
+        torch.cuda.current_stream().wait_stream(stream)
+        torch.cuda.synchronize()
+
+        graph = torch.cuda.CUDAGraph()
+        with torch.cuda.graph(graph):
+            fn(*args)
+        torch.cuda.synchronize()
+
+        times: list[float] = []
+        for i in range(warmup + reps):
+            start = torch.cuda.Event(enable_timing=True)
+            end = torch.cuda.Event(enable_timing=True)
+            start.record()
+            graph.replay()
+            end.record()
+            torch.cuda.synchronize()
+            if i >= warmup:
+                times.append(start.elapsed_time(end))
+        return times
+    except Exception:
+        return None
+
+
+def _check_correct_multi_init(
+    solution,
+    eager_fn,
+    *,
+    n: int,
+    spec: OpSpec,
+    seeds: tuple[int, ...],
+) -> bool:
+    """Robust-kbench-style multi-init correctness: require allclose on every one
+    of ``seeds`` independent random inputs (not a single fixed seed).
+
+    A kernel that hardcodes / caches outputs for one specific input
+    distribution passes a single-seed check but fails here. Returns True only if
+    dtype, shape, and values match the eager reference for all seeds.
+    """
+
+    for s in seeds:
+        inputs = make_inputs(n, spec.dtype, seed=s, op=spec.name)
+        out = solution(*inputs)
+        ref = eager_fn(*inputs)
+        if out.dtype != ref.dtype:
+            return False
+        if tuple(out.shape) != tuple(ref.shape):
+            return False
+        if not torch.allclose(out, ref, rtol=spec.rtol, atol=spec.atol):
+            return False
+    return True
 
 
 def _compute_ratio_from_events(events) -> float:
@@ -253,7 +446,8 @@ def bench_source(
 
     eager_args = make_inputs(n, spec.dtype, seed=43, op=spec.name)
     candidate_args = tuple(t.clone() for t in eager_args)
-    t_eager_ms = _time_cuda(eager_fn, eager_args, reps=reps, warmup=warmup)
+    eager_times = _time_cuda_raw(eager_fn, eager_args, reps=reps, warmup=warmup)
+    t_eager_ms = statistics.median(eager_times)
 
     # Count real Triton launches during the candidate's timed window. If the
     # runtime hook surface is available we use the measured count (0 means the
@@ -265,7 +459,8 @@ def bench_source(
     # kernel on older Triton -- it only makes the unverifiable case auditable.
     counter = _TritonLaunchCounter()
     with counter:
-        t_kernel_ms = _time_cuda(solution, candidate_args, reps=reps, warmup=warmup)
+        kernel_times = _time_cuda_raw(solution, candidate_args, reps=reps, warmup=warmup)
+    t_kernel_ms = statistics.median(kernel_times)
     caps: list[str] = []
     caps_advisory: list[str] = []
     if counter.available():
@@ -282,6 +477,23 @@ def bench_source(
     correct_post = False
     if tuple(out_post.shape) == tuple(ref_post.shape) and out_post.dtype == ref_post.dtype:
         correct_post = torch.allclose(out_post, ref_post, rtol=spec.rtol, atol=spec.atol)
+
+    # Robust-kbench-style multi-init correctness: require the candidate to match
+    # the eager reference across several additional independent random seeds.
+    # This catches kernels that hardcode / cache outputs for the fixed 42/44
+    # inputs. Surfaced as the non-gating advisory cap multi_init_fail so the
+    # primary `correct` verdict (pre+post) keeps its existing semantics while the
+    # stricter signal is available to downstream eval.
+    multi_init_ok = False
+    if correct_pre and correct_post:
+        try:
+            multi_init_ok = _check_correct_multi_init(
+                solution, eager_fn, n=n, spec=spec, seeds=(101, 202, 303)
+            )
+        except Exception:
+            multi_init_ok = False
+        if not multi_init_ok:
+            caps_advisory.append("multi_init_fail")
     correct = bool(correct_pre and correct_post)
     speedup = t_eager_ms / max(t_kernel_ms, 1e-9)
     try:
@@ -289,16 +501,48 @@ def bench_source(
     except Exception:
         pr_frac = 0.0
 
+    # Distribution-aware timing metadata (CV/IQR/trimmed-mean) and a percentile
+    # bootstrap CI on the speedup ratio. All additive: downstream reward uses the
+    # median-based `speedup` exactly as before.
+    eager_stats = _timing_stats(eager_times)
+    kernel_stats = _timing_stats(kernel_times)
+    speedup_ci_p05, speedup_ci_p95 = _bootstrap_speedup_ci(eager_times, kernel_times)
+
+    # CUDA-graph replay timing for sub-launch-overhead kernels (None when CUDA
+    # graphs are unavailable or capture fails -> reported as None, no fallback
+    # effect on the headline speedup).
+    t_kernel_graph_ms = None
+    speedup_graph = None
+    # Rebuild FRESH inputs for graph capture: candidate_args was already consumed
+    # by _time_cuda_raw above, and in-place Triton kernels overwrite their output
+    # buffers -- capturing the graph over those mutated tensors would time a no-op
+    # re-execution of already-computed outputs, not a genuine replay. seed=45 is
+    # distinct from the correctness (42/44) and timing (43) seeds.
+    graph_args = make_inputs(n, spec.dtype, seed=45, op=spec.name)
+    graph_times = _time_cuda_graph_raw(solution, graph_args, reps=reps, warmup=warmup)
+    if graph_times:
+        t_kernel_graph_ms = statistics.median(graph_times)
+        speedup_graph = t_eager_ms / max(t_kernel_graph_ms, 1e-9)
+
     return {
         "op": spec.name,
         "shape": n,
         "split": split,
         "correct": correct,
+        "multi_init_ok": multi_init_ok,
         "dtype_ok": dtype_ok,
         "shape_ok": shape_ok,
         "speedup": speedup,
+        "speedup_ci_p05": speedup_ci_p05,
+        "speedup_ci_p95": speedup_ci_p95,
+        "speedup_graph": speedup_graph,
         "t_eager_ms": t_eager_ms,
         "t_kernel_ms": t_kernel_ms,
+        "t_kernel_graph_ms": t_kernel_graph_ms,
+        "t_eager_cv": eager_stats["cv"],
+        "t_kernel_cv": kernel_stats["cv"],
+        "timing_eager": eager_stats,
+        "timing_kernel": kernel_stats,
         "launches_timed": launches_timed,
         "pr_frac": pr_frac,
         "caps": caps,

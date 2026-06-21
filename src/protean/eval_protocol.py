@@ -52,6 +52,38 @@ def required_n_paired(d_z: float, alpha: float = 0.05, power: float = 0.80) -> i
     return math.ceil(((_norm_ppf(1 - alpha / 2) + _norm_ppf(power)) / d_z) ** 2)
 
 
+def power_at(n: int, d_z: float, alpha: float = 0.05) -> float:
+    """Achieved power of a two-sided paired t/z test for standardized effect d_z at sample size n.
+
+    Normal-approx power: 1 - beta = Phi(|d_z|*sqrt(n) - z_{1-alpha/2}) (the negligible lower-tail term is
+    dropped). Inverse of mde_paired/required_n_paired and used by power_curve below. Returns power in
+    [0,1]. (Standard retrospective-power identity; cf. Hidden Costs of RLVR arxiv:2509.21882 saturation.)
+    """
+    if n < 1:
+        raise ValueError("n must be >= 1")
+    ncp = abs(d_z) * math.sqrt(n)
+    return max(0.0, min(1.0, _norm_cdf(ncp - _norm_ppf(1 - alpha / 2))))
+
+
+def power_curve(d_z: float, ns: list | None = None, alpha: float = 0.05,
+                power: float = 0.80) -> dict:
+    """Power vs sample-size curve for a fixed standardized effect d_z (pure CPU; no GPU, no grader).
+
+    Returns {"d_z", "alpha", "target_power", "n_for_target", "curve": [(n, power), ...]} where `curve`
+    pairs each n in `ns` with its achieved power, and `n_for_target` is required_n_paired(d_z) — the
+    smallest n reaching `power`. `ns` defaults to a spread that brackets the n=3 -> n=200 design jump.
+    Lets a caller plot the saturation curve and justify the powered held-out scale-up. (research:
+    paired-bootstrap 2511.19794; Hidden Costs of RLVR saturation curves arxiv:2509.21882.)
+    """
+    if ns is None:
+        ns = [3, 5, 10, 25, 50, 100, 150, 200]
+    return {
+        "d_z": d_z, "alpha": alpha, "target_power": power,
+        "n_for_target": required_n_paired(d_z, alpha=alpha, power=power),
+        "curve": [(n, power_at(n, d_z, alpha=alpha)) for n in ns],
+    }
+
+
 def _binom_tail_ge(k: int, n: int, p: float = 0.5) -> float:
     return sum(math.comb(n, j) * p**j * (1 - p)**(n - j) for j in range(k, n + 1))
 
@@ -75,8 +107,57 @@ def _std(xs: list) -> float:
     return math.sqrt(sum((x - m) ** 2 for x in xs) / (len(xs) - 1))
 
 
-def hierarchical_bootstrap_ci(deltas_by_op: dict, B: int = 10000, seed: int = 0, ci: float = 0.95) -> dict:
-    """Resample ops with replacement, then shapes within op; percentile CI on the grand mean of D."""
+def _norm_cdf(x: float) -> float:
+    """Standard-normal CDF via erf (pure stdlib; pairs with _norm_ppf for BCa)."""
+    return 0.5 * (1.0 + math.erf(x / math.sqrt(2.0)))
+
+
+# Minimum number of ops required before BCa is allowed: the acceleration term is estimated by an
+# op-level jackknife, which is unreliable with very few leave-one-out points. arxiv:2404.12967 (2024)
+# found BCa offers little over percentile and can be worse in heavy-tailed / tiny-sample settings, so we
+# gate BCa on n_ops >= BCA_MIN_OPS and otherwise fall back to percentile (recorded in the returned dict).
+BCA_MIN_OPS = 5
+
+
+def _lo_index(p: float, B: int) -> int:
+    """Lower-tail index into a length-B SORTED list for quantile p; floor(p*B) clamped to [0, B-1].
+
+    Matches the percentile branch's historical lo convention `boots[int(p*B)]` exactly (so the default
+    percentile path stays byte-identical) while clamping tiny/extreme p in range.
+    """
+    return max(0, min(int(p * B), B - 1))
+
+
+def _hi_index(p: float, B: int) -> int:
+    """Upper-tail index into a length-B SORTED list for quantile p; floor(p*B)-1 clamped to [0, B-1].
+
+    Matches the percentile branch's historical hi convention `boots[int(p*B) - 1]` exactly. The `-1`
+    brings the interval one rank INSIDE the sorted array so an extreme BCa adjustment (large positive z0
+    and/or a_hat pushing a_hi toward 1.0) can never silently return the single most extreme replicate as
+    the upper bound: a_hi==1.0 maps to boots[B-1] (the max) and an interior a_hi rounds toward the
+    interior, the same rule the lower bound uses. This unifies the two paths so they cannot drift.
+    """
+    return max(0, min(int(p * B) - 1, B - 1))
+
+
+def hierarchical_bootstrap_ci(deltas_by_op: dict, B: int = 10000, seed: int = 0, ci: float = 0.95,
+                              method: str = "percentile") -> dict:
+    """Hierarchical bootstrap CI on the grand mean of D (resample ops, then shapes within op).
+
+    method:
+      * "percentile" (default, unchanged behavior) — plain percentile interval on the bootstrap dist.
+      * "bca"        — bias-corrected & accelerated (Efron 1987). Bias z0 from the fraction of bootstrap
+                       replicates below the point estimate; acceleration a_hat from an OP-LEVEL jackknife
+                       (respects the two-level design). Requires len(deltas_by_op) >= BCA_MIN_OPS; with
+                       fewer ops the jackknife a_hat is unreliable, so we fall back to percentile and set
+                       ci_method="percentile" in the result. (research: paired-bootstrap 2511.19794;
+                       comparative study arxiv:2404.12967; Erik Drysdale BCa recipe.)
+
+    Returned keys are a superset of the prior contract (gap, ci_lo, ci_hi, excludes_zero) plus
+    ci_method (the method actually used after any fallback) so callers can record which interval was taken.
+    """
+    if method not in ("percentile", "bca"):
+        raise ValueError(f"method must be 'percentile' or 'bca', got {method!r}")
     rng = random.Random(seed)
     ops = list(deltas_by_op)
     point = _grand_mean(deltas_by_op)
@@ -89,9 +170,55 @@ def hierarchical_bootstrap_ci(deltas_by_op: dict, B: int = 10000, seed: int = 0,
             vals.extend(d[rng.randrange(len(d))] for _ in range(len(d)))
         boots.append(sum(vals) / len(vals))
     boots.sort()
-    lo = boots[int((1 - ci) / 2 * B)]
-    hi = boots[int((1 + ci) / 2 * B) - 1]
-    return {"gap": point, "ci_lo": lo, "ci_hi": hi, "excludes_zero": (lo > 0 or hi < 0)}
+
+    used = method
+    if method == "bca" and len(ops) < BCA_MIN_OPS:
+        used = "percentile"  # not enough ops for a trustworthy jackknife acceleration
+
+    if used == "bca":
+        # bias-correction z0: inverse-normal of the fraction of replicates strictly below the point est.
+        n_below = sum(1 for b in boots if b < point)
+        frac = n_below / B
+        frac = min(max(frac, 1.0 / (2 * B)), 1.0 - 1.0 / (2 * B))  # clamp off 0/1 so ppf is finite
+        z0 = _norm_ppf(frac)
+        # acceleration a_hat from an op-level jackknife on the grand mean (leave-one-op-out).
+        # NOTE: we use the RAW leave-one-out grand means as the jackknife replicates here, not Efron
+        # pseudo-values theta_i = n*theta_hat - (n-1)*theta_(i). In the standard a_hat ratio
+        # sum((jbar - j)^3) / [6 * (sum((jbar - j)^2))^1.5] the (n-1)/n scale of the pseudo-value
+        # transform appears in both numerator and denominator and cancels, so raw leave-one-out estimates
+        # give the same a_hat (this matches scipy.stats.bootstrap / Davison & Hinkley 1997).
+        jack = []
+        for skip in ops:
+            kept = {op: deltas_by_op[op] for op in ops if op != skip}
+            jack.append(_grand_mean(kept))
+        jbar = sum(jack) / len(jack)
+        num = sum((jbar - j) ** 3 for j in jack)
+        den = 6.0 * (sum((jbar - j) ** 2 for j in jack)) ** 1.5
+        a_hat = num / den if den != 0 else 0.0
+        z_lo = _norm_ppf((1 - ci) / 2)
+        z_hi = _norm_ppf((1 + ci) / 2)
+
+        def _adj(zq: float) -> float:
+            denom = 1.0 - a_hat * (z0 + zq)
+            if denom == 0:
+                denom = 1e-12
+            return _norm_cdf(z0 + (z0 + zq) / denom)
+
+        a_lo = min(max(_adj(z_lo), 0.0), 1.0)
+        a_hi = min(max(_adj(z_hi), 0.0), 1.0)
+        # Guard against a pathological adjustment inverting the interval (e.g. a_hat or z0 so large the
+        # adjusted quantiles cross). With valid inputs a_lo < a_hi always holds.
+        assert a_lo <= a_hi, f"BCa adjusted quantiles inverted: a_lo={a_lo} > a_hi={a_hi}"
+        # SAME index convention as the percentile branch (via the shared helpers) so the two paths cannot
+        # drift: the upper bound is brought one rank inside, never returning the lone extreme replicate.
+        lo = boots[_lo_index(a_lo, B)]
+        hi = boots[_hi_index(a_hi, B)]
+    else:
+        lo = boots[_lo_index((1 - ci) / 2, B)]
+        hi = boots[_hi_index((1 + ci) / 2, B)]
+
+    return {"gap": point, "ci_lo": lo, "ci_hi": hi, "excludes_zero": (lo > 0 or hi < 0),
+            "ci_method": used}
 
 
 def build_eval_set(ops: list, n_per_op: int = N_HELDOUT_PER_OP, seed: int = 0) -> list:
@@ -105,20 +232,49 @@ def build_eval_set(ops: list, n_per_op: int = N_HELDOUT_PER_OP, seed: int = 0) -
     return tasks
 
 
-def evaluate_policy(grade_fn: Callable[[dict], float], tasks: list, rollouts: int = 8) -> dict:
-    """Per-task MEAN reward over `rollouts` samples. grade_fn(task)->reward in [0,2]. Key = (op, idx)."""
+def _crn_seed(base_seed: int, op, idx, k: int) -> int:
+    """Deterministic per-(task, rollout-index) seed for common-random-numbers pairing."""
+    import hashlib
+    h = hashlib.sha256(f"{base_seed}|{op}|{idx}|{k}".encode()).hexdigest()[:16]
+    return int(h, 16)
+
+
+def evaluate_policy(grade_fn: Callable, tasks: list, rollouts: int = 8,
+                    crn_seed: int | None = None) -> dict:
+    """Per-task MEAN reward over `rollouts` samples. grade_fn(task)->reward in [0,2]. Key = (op, idx).
+
+    Common-Random-Numbers (CRN) variance reduction for paired evaluation: when `crn_seed` is provided,
+    the k-th rollout of every task is graded with a deterministic rollout-indexed seed derived from
+    (crn_seed, op, idx, k), and `grade_fn` is called as grade_fn(task, rollout_seed=<int>). Pairing the
+    k-th base rollout with the k-th trained rollout on the SAME seed cancels shared input noise from the
+    per-task delta, lowering the variance of the paired endpoint (Law & Kelton; Sharma arxiv:2512.24145).
+
+    When `crn_seed` is None (default) behavior is unchanged: grade_fn is called as grade_fn(task), so
+    existing single-argument graders keep working byte-for-byte. For deterministic graders CRN is a no-op
+    on the value but the explicit seeding still pins base/trained to identical inputs, guarding against a
+    future stochastic grade_fn silently breaking the paired design.
+    """
     out = {}
     for t in tasks:
-        rs = [grade_fn(t) for _ in range(rollouts)]
+        if crn_seed is None:
+            rs = [grade_fn(t) for _ in range(rollouts)]
+        else:
+            rs = [grade_fn(t, rollout_seed=_crn_seed(crn_seed, t["op"], t["idx"], k))
+                  for k in range(rollouts)]
         out[(t["op"], t["idx"])] = sum(rs) / len(rs)
     return out
 
 
-def paired_report(base: dict, trained: dict, B: int = 10000, boot_seed: int = 0) -> dict:
+def paired_report(base: dict, trained: dict, B: int = 10000, boot_seed: int = 0,
+                  ci_method: str = "percentile") -> dict:
     """Money report: paired per-task deltas -> hierarchical bootstrap CI + across-op sign test + power.
 
     `boot_seed` controls the bootstrap resampling RNG (default 0 preserves prior behavior). Callers that
     want the CI band to vary with their own seed (e.g. synthetic_powered_report) pass it through here.
+
+    `ci_method` selects the bootstrap interval: "percentile" (default, unchanged) or "bca" (bias-corrected
+    & accelerated; auto-falls-back to percentile when n_ops < BCA_MIN_OPS). The method actually used is
+    surfaced as the additive `ci_method` field so a caller can tell whether a BCa request fell back.
     """
     keys = sorted(set(base) & set(trained))
     by_op = defaultdict(list)
@@ -126,7 +282,7 @@ def paired_report(base: dict, trained: dict, B: int = 10000, boot_seed: int = 0)
         by_op[op].append(trained[(op, idx)] - base[(op, idx)])
     per_op = {op: sum(d) / len(d) for op, d in by_op.items()}
     all_d = [v for d in by_op.values() for v in d]
-    boot = hierarchical_bootstrap_ci(by_op, B=B, seed=boot_seed)
+    boot = hierarchical_bootstrap_ci(by_op, B=B, seed=boot_seed, method=ci_method)
     sign = across_op_sign_test(per_op)
     n = len(all_d)
     sd = _std(all_d)
@@ -134,6 +290,7 @@ def paired_report(base: dict, trained: dict, B: int = 10000, boot_seed: int = 0)
         "n_tasks": n, "n_ops": len(by_op),
         "gap_mean": boot["gap"], "ci95": (boot["ci_lo"], boot["ci_hi"]),
         "gap_ci_excludes_zero": boot["excludes_zero"],
+        "ci_method": boot["ci_method"],
         "per_op_delta": per_op, "sign_test": sign,
         "observed_dz": (sum(all_d) / n) / sd if sd > 0 else float("inf"),
         "mde_dz_at_n": mde_paired(n),

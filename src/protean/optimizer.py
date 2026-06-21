@@ -7,15 +7,107 @@ current best kernel, edit it, grade it, keep improvements, and log everything.
 from __future__ import annotations
 
 import json
+import math
+import random
 import time
 from pathlib import Path
 
 from protean.grader import grade_source
 from protean.kernels import HAND_OPTIMIZED_ELEMENTWISE_ADD_RELU, seed_kernel_for
-from protean.model.policy import learned_kernel_edits, local_kernel_edits
+from protean.model.policy import (
+    config_action_space,
+    effective_action_space,
+    learned_kernel_edits,
+    local_kernel_edits,
+    make_config_edit,
+)
 from protean.model.rl_layer import accept_candidate, score, score_delta
 from protean.model.tiny_policy import ACTION_BLOCK_SIZES, TinyPolicyHead, state_features
 from protean.splits import HELD_OUT_SHAPES, TRAIN_SHAPES
+
+
+class BanditSearch:
+    """UCB1 bandit over the joint launch-config space (KernelBand, arXiv:2511.18868).
+
+    Each arm is a ``(block_size, num_warps, num_stages)`` tuple. Instead of the
+    flat deterministic sweep that re-evaluates every block size each round, the
+    bandit concentrates trials on empirically strong arms while keeping enough
+    exploration to discover new winners. Pure Python; no CUDA dependency.
+    """
+
+    def __init__(
+        self,
+        arms: list[tuple[int, int, int]] | None = None,
+        *,
+        c: float = math.sqrt(2.0),
+        seed: int = 0,
+    ) -> None:
+        self.arms = list(arms) if arms is not None else config_action_space()
+        if not self.arms:
+            raise ValueError("BanditSearch requires at least one arm")
+        self.c = float(c)
+        self._rng = random.Random(seed)
+        self.counts: dict[tuple[int, int, int], int] = {arm: 0 for arm in self.arms}
+        self.values: dict[tuple[int, int, int], float] = {arm: 0.0 for arm in self.arms}
+        self.total = 0
+
+    def select(self) -> tuple[int, int, int]:
+        """Return the next arm to try via UCB1.
+
+        Unvisited arms get priority (infinite UCB); ties are broken randomly so
+        the search does not deterministically favour the enumeration order.
+        """
+
+        unvisited = [arm for arm in self.arms if self.counts[arm] == 0]
+        if unvisited:
+            return self._rng.choice(unvisited)
+
+        log_total = math.log(self.total)
+        best_arm = self.arms[0]
+        best_index = -math.inf
+        order = list(self.arms)
+        self._rng.shuffle(order)
+        for arm in order:
+            n = self.counts[arm]
+            ucb = self.values[arm] + self.c * math.sqrt(log_total / n)
+            if ucb > best_index:
+                best_index = ucb
+                best_arm = arm
+        return best_arm
+
+    def update(self, arm: tuple[int, int, int], reward: float) -> None:
+        """Incremental-mean update of the chosen arm's value estimate."""
+
+        self.counts[arm] += 1
+        self.total += 1
+        n = self.counts[arm]
+        prev = self.values[arm]
+        self.values[arm] = prev + (float(reward) - prev) / n
+
+    def best_arm(self) -> tuple[int, int, int]:
+        """Arm with the highest empirical mean among those visited."""
+
+        visited = [arm for arm in self.arms if self.counts[arm] > 0]
+        pool = visited or self.arms
+        return max(pool, key=lambda arm: self.values[arm])
+
+    def state(self) -> dict:
+        """JSON-serialisable snapshot for the trial trace."""
+
+        return {
+            "c": self.c,
+            "total": self.total,
+            "arms": [
+                {
+                    "block_size": arm[0],
+                    "num_warps": arm[1],
+                    "num_stages": arm[2],
+                    "count": self.counts[arm],
+                    "value": round(self.values[arm], 6),
+                }
+                for arm in self.arms
+            ],
+        }
 
 
 def evaluate_kernel(source: str, *, op: str = "elementwise_add_relu", reps: int, warmup: int) -> dict:
@@ -36,6 +128,17 @@ def evaluate_kernel(source: str, *, op: str = "elementwise_add_relu", reps: int,
         "mean_held_out_speedup": round(mean_held_out_speedup, 6),
         "mean_reward": round(mean_reward, 6),
     }
+
+
+def bandit_reward(summary: dict) -> float:
+    """Scalar bandit feedback derived from a candidate evaluation summary.
+
+    Mirrors the ranking in :func:`protean.model.rl_layer.score` (held-out speed
+    first, then mean reward) collapsed into a single value the UCB estimator can
+    average. Failed evaluations score 0.0.
+    """
+
+    return float(summary.get("mean_held_out_speedup", 0.0)) + 0.1 * float(summary.get("mean_reward", 0.0))
 
 
 def failed_evaluation_summary(exc: Exception) -> dict:
@@ -100,6 +203,10 @@ def run_optimization(
     hud_session=None,
     powered_eval: bool = False,
     powered_eval_n_per_op: int = 40,
+    bandit_c: float = math.sqrt(2.0),
+    bandit_seed: int = 0,
+    bandit_patience: int = 0,
+    bandit_arms: list[tuple[int, int, int]] | None = None,
 ) -> dict:
     out = Path(out_dir)
     out.mkdir(parents=True, exist_ok=True)
@@ -124,6 +231,17 @@ def run_optimization(
     total_model_cost_usd = 0.0
     total_tokens = 0
     pricing_misses = 0
+    if edit_policy == "bandit":
+        # Prune the arm space to axes that actually change this op's kernel, so
+        # logged arm counts reflect distinct candidates (block_size is inert for
+        # rmsnorm/softmax_rows -- see policy.effective_action_space).
+        arms = bandit_arms if bandit_arms is not None else effective_action_space(best_source)
+        bandit = BanditSearch(arms=arms, c=bandit_c, seed=bandit_seed)
+    else:
+        bandit = None
+    rounds_since_improvement = 0
+    stopped_early = False
+    rounds_run = 0
     if stream_hud and hud_session is None:
         from protean.hud_stream import start_hud_stream_session
 
@@ -152,7 +270,9 @@ def run_optimization(
         )
 
         for round_idx in range(max_rounds):
+            rounds_run += 1
             trial_controller_decision = controller_decision(best_summary, controller_path)
+            selected_arm = None
             if edit_policy == "fireworks":
                 from protean.model.fireworks_policy import DEFAULT_FIREWORKS_MODEL, fireworks_kernel_edit
 
@@ -164,12 +284,17 @@ def run_optimization(
                         model=fireworks_model or DEFAULT_FIREWORKS_MODEL,
                     )
                 ]
+            elif edit_policy == "bandit":
+                # UCB1 selects a single arm in the joint launch-config space.
+                selected_arm = bandit.select()
+                edits = [make_config_edit(best_source, *selected_arm)]
             elif policy_path is not None or edit_policy == "learned":
                 if policy_path is None:
                     raise ValueError("policy_path is required when edit_policy='learned'")
                 edits = learned_kernel_edits(best_source, best_summary, str(policy_path))
             else:
                 edits = local_kernel_edits(best_source)
+            round_improved = False
             for edit in edits:
                 trial_count += 1
                 total_model_cost_usd += float(edit.model_cost_usd)
@@ -199,10 +324,26 @@ def run_optimization(
                 accepted = eval_error is None and accept_candidate(candidate_score, best_score)
                 if accepted:
                     accepted_count += 1
+                    round_improved = True
                     best_source = edit.source
                     best_summary = candidate_summary
                     best_score = candidate_score
                     best_path.write_text(best_source)
+
+                # Feed the bandit its reward regardless of acceptance so UCB
+                # learns the true value of every arm it pulls.
+                bandit_arm_info = None
+                if bandit is not None and selected_arm is not None:
+                    reward_signal = 0.0 if eval_error is not None else bandit_reward(candidate_summary)
+                    bandit.update(selected_arm, reward_signal)
+                    bandit_arm_info = {
+                        "block_size": selected_arm[0],
+                        "num_warps": selected_arm[1],
+                        "num_stages": selected_arm[2],
+                        "reward": round(reward_signal, 6),
+                        "count": bandit.counts[selected_arm],
+                        "value": round(bandit.values[selected_arm], 6),
+                    }
 
                 hud_stream = None
                 hud_stream_error = None
@@ -261,12 +402,36 @@ def run_optimization(
                             "eval_error": eval_error,
                             "hud_stream": hud_stream,
                             "hud_stream_error": hud_stream_error,
+                            "bandit_arm": bandit_arm_info,
                             "summary": candidate_summary,
                         },
                         sort_keys=True,
                     )
                     + "\n"
                 )
+
+            # Anytime stopping: bail out once the search fails to improve the
+            # best kernel for `bandit_patience` consecutive rounds. This is a
+            # bandit-only feature -- it is gated on `bandit is not None` so a
+            # caller that sets `bandit_patience` while running a non-bandit edit
+            # policy (local/learned/fireworks) is never silently truncated. The
+            # patience counter only accumulates once UCB has finished its
+            # mandatory initial exploration (every arm visited at least once):
+            # stagnation during forced exploration is expected, so it must not
+            # abort the search while unexplored arms could still win.
+            exploration_done = bandit is None or bandit.total >= len(bandit.arms)
+            if round_improved or not exploration_done:
+                rounds_since_improvement = 0
+            else:
+                rounds_since_improvement += 1
+            if (
+                bandit is not None
+                and bandit_patience > 0
+                and exploration_done
+                and rounds_since_improvement >= bandit_patience
+            ):
+                stopped_early = True
+                break
 
     final = {
         "best_score": best_score,
@@ -287,6 +452,18 @@ def run_optimization(
         "hud_job_url": hud_session.job_url if hud_session is not None else None,
         "hud_job_name": hud_session.name if hud_session is not None else None,
         "hud_group": hud_group if stream_hud else None,
+        "rounds_run": rounds_run,
+        "stopped_early": stopped_early,
+        "bandit": bandit.state() if bandit is not None else None,
+        "bandit_best_arm": (
+            {
+                "block_size": bandit.best_arm()[0],
+                "num_warps": bandit.best_arm()[1],
+                "num_stages": bandit.best_arm()[2],
+            }
+            if bandit is not None
+            else None
+        ),
     }
 
     # Optional final reporting step: powered base(seed)-vs-trained(best) held-out eval (GPU).

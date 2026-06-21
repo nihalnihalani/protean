@@ -18,6 +18,25 @@ class RewardConfig:
     speedup_reward_weight: float = 1.5
     pr_bonus: float = 0.2
     max_reward: float = 2.0
+    # Profiling-aware reward shaping. ``pr_mode`` selects how the profiling
+    # ratio (pr_frac, the fraction of runtime spent in the generated kernel)
+    # contributes to the reward:
+    #   "bonus"          - legacy additive bonus (config.pr_bonus * pr_frac).
+    #                      Default; preserves historical reward values exactly.
+    #   "multiplicative" - Dr. Kernel form: speedup_reward is scaled by
+    #                      (1 + pr_frac) and no separate additive term is added.
+    #                      This makes speedup credit conditional on the kernel
+    #                      actually being the runtime bottleneck, discouraging
+    #                      lazy optimization of non-bottleneck kernels.
+    #   "centered"       - gradient-neutral profiling bonus. The bonus is
+    #                      config.pr_bonus * (pr_frac - pr_center), which is
+    #                      zero-mean over a kernel population whose mean
+    #                      pr_frac equals pr_center. At single-op scope this
+    #                      re-ranks by profiling quality without shifting the
+    #                      expected reward, so it adds no bias to the policy
+    #                      gradient baseline.
+    pr_mode: str = "bonus"
+    pr_center: float = 0.5
 
 
 DEFAULT_CONFIG = RewardConfig()
@@ -48,7 +67,28 @@ def load_reward_config() -> RewardConfig:
         ),
         pr_bonus=float(data.get("PR_BONUS", data.get("pr_bonus", DEFAULT_CONFIG.pr_bonus))),
         max_reward=float(data.get("MAX_REWARD", data.get("max_reward", DEFAULT_CONFIG.max_reward))),
+        pr_mode=str(data.get("PR_MODE", data.get("pr_mode", DEFAULT_CONFIG.pr_mode))),
+        pr_center=float(data.get("PR_CENTER", data.get("pr_center", DEFAULT_CONFIG.pr_center))),
     )
+
+
+def _pr_reward(config: RewardConfig, pr_clamped: float, hard_failed: bool) -> float:
+    """Additive profiling-aware reward term, selected by ``config.pr_mode``.
+
+    Returns 0.0 on any hard failure. In ``multiplicative`` mode the profiling
+    signal is already folded into ``speedup_reward`` (scaled by 1 + pr_frac),
+    so there is no separate additive term here. ``centered`` mode returns a
+    zero-mean (gradient-neutral) bonus about ``pr_center``.
+    """
+
+    if hard_failed:
+        return 0.0
+    if config.pr_mode == "multiplicative":
+        return 0.0
+    if config.pr_mode == "centered":
+        return config.pr_bonus * (pr_clamped - config.pr_center)
+    # Default "bonus" mode: legacy additive term.
+    return config.pr_bonus * pr_clamped
 
 
 def compute_reward(
@@ -90,19 +130,43 @@ def compute_reward(
     speedup_score = 0.0
     correctness_reward = config.correct_floor if correct and dtype_ok and shape_ok else 0.0
 
+    pr_clamped = max(0.0, min(float(pr_frac), 1.0))
+
     if not hard_failed and speedup >= config.speedup_floor:
         capped_speedup = max(config.speedup_floor, min(float(speedup), config.speedup_cap))
         denominator = math.log(config.speedup_cap / config.speedup_floor)
         speedup_score = math.log(capped_speedup / config.speedup_floor) / denominator if denominator > 0 else 0.0
         speedup_score = max(0.0, min(speedup_score, 1.0))
         speedup_reward = config.speedup_reward_weight * speedup_score
+        if config.pr_mode == "multiplicative":
+            # Dr. Kernel (arXiv:2602.05885): gate speedup credit on the kernel
+            # being the runtime bottleneck. No separate additive PR term.
+            #
+            # The base weight is re-normalised by (1 + max_pr) where max_pr=1.0
+            # (pr_clamped is bounded to [0, 1]). Without this, a high-pr kernel
+            # at speedup_reward_weight=1.5 would reach 1.5*1.0*(1+1.0)=3.0 and,
+            # together with correctness_reward, sit far above max_reward=2.0 --
+            # the final clamp would then flatten the speedup gradient across the
+            # entire top of the speedup_score range. Normalising keeps the
+            # maximum pre-clamp speedup credit at the same ceiling as "bonus"
+            # mode, so speedup_score stays informative for the policy gradient
+            # while pr_clamped still re-weights bottleneck vs non-bottleneck
+            # kernels.
+            speedup_reward = speedup_reward * (1.0 + pr_clamped) / (1.0 + 1.0)
     elif correct and dtype_ok and shape_ok and speedup < config.speedup_floor:
         caps.append("below_speedup_floor")
 
-    pr_clamped = max(0.0, min(float(pr_frac), 1.0))
-    reward = correctness_reward + speedup_reward + (config.pr_bonus * pr_clamped if not hard_failed else 0.0)
+    pr_reward = _pr_reward(config, pr_clamped, hard_failed)
+    reward = correctness_reward + speedup_reward + pr_reward
     if hard_failed:
         reward = 0.0
+
+    # Lower-bound clamp. "centered" mode subtracts pr_bonus*(pr_center-pr_frac)
+    # for below-center kernels, which can otherwise push a correct kernel's
+    # total below zero (e.g. a kernel just under speedup_floor with pr_frac=0).
+    # The bound keeps reward non-negative without affecting "bonus" or
+    # "multiplicative" modes, whose contributions are always >= 0.
+    reward = max(0.0, reward)
 
     return {
         "reward": round(min(reward, config.max_reward), 6),
@@ -114,7 +178,8 @@ def compute_reward(
         "speedup_score": round(speedup_score, 6),
         "correctness_reward": round(correctness_reward, 6),
         "speedup_reward": round(speedup_reward, 6),
-        "pr_reward": round(config.pr_bonus * pr_clamped if not hard_failed else 0.0, 6),
+        "pr_reward": round(pr_reward, 6),
+        "pr_mode": config.pr_mode,
         "split": split,
         "caps": sorted(set(caps)),
         "launches_timed": int(launches_timed),
