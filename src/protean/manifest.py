@@ -43,7 +43,10 @@ def freeze(
 
 
 def sha256_file(path: str | Path) -> str:
-    return hashlib.sha256(Path(path).read_bytes()).hexdigest()
+    # Normalize line endings to LF to prevent Windows CRLF vs Linux LF mismatch
+    content = Path(path).read_bytes()
+    normalized = content.replace(b"\r\n", b"\n")
+    return hashlib.sha256(normalized).hexdigest()
 
 
 def resolve_manifest_path(path: str | Path = "manifest_v1.jsonl") -> Path:
