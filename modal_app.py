@@ -45,7 +45,9 @@ def bench_remote(payload: dict) -> dict:
     Grade a single user Triton kernel inside the H100 sandbox.
     payload: {op, M, N, dtype, src}
     """
-    sys.path.insert(0, "/mcp_server")
+    for p in ["/app", "/mcp_server"]:
+        if p not in sys.path:
+            sys.path.insert(0, p)
     from protean.subprocess_runner import run_bench
     
     op = payload["op"]
@@ -69,8 +71,9 @@ def train():
     os.environ["SFT_CKPT_PATH"] = "/models/sft_warmup"
     os.environ["WORKSPACE_ROOT"] = "/workdir"
     
-    sys.path.insert(0, "/mcp_server")
-    sys.path.insert(0, "/mcp_server/train")
+    for p in ["/app", "/mcp_server", "/app/train", "/mcp_server/train"]:
+        if p not in sys.path:
+            sys.path.insert(0, p)
     
     import grpo_loop
     grpo_loop.main()
@@ -83,8 +86,9 @@ def train():
 )
 def sft_warmup():
     """Launch the SFT warmup training loop on H100."""
-    sys.path.insert(0, "/mcp_server")
-    sys.path.insert(0, "/mcp_server/train")
+    for p in ["/app", "/mcp_server", "/app/train", "/mcp_server/train"]:
+        if p not in sys.path:
+            sys.path.insert(0, p)
     import sft_warmup
     sft_warmup.main()
 
@@ -96,7 +100,9 @@ def sft_warmup():
 )
 def eval_heldout(model_path: str = "/models/sft_warmup"):
     """Evaluate a trained model checkpoint against held-out test shapes."""
-    sys.path.insert(0, "/mcp_server")
+    for p in ["/app", "/mcp_server"]:
+        if p not in sys.path:
+            sys.path.insert(0, p)
     from protean.tasks import TASKS
     from protean.grader import evaluate_kernel
     
