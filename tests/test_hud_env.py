@@ -32,7 +32,7 @@ def test_task_metadata_lists_prompt_paths():
     assert all(row["prompt_path"].endswith("prompt.md") for row in rows)
 
 
-def test_hud_eval_result_normalizes_reward_and_keeps_raw_score():
+def test_hud_eval_result_rewards_correct_kernels_above_one_and_keeps_raw_score():
     result = to_eval_result(
         {
             "reward": 1.3,
@@ -42,10 +42,13 @@ def test_hud_eval_result_normalizes_reward_and_keeps_raw_score():
             "caps": [],
         }
     )
-    assert result.reward == 0.65
+    assert result.reward == 2.3
     assert result.info["protean_reward_raw"] == 1.3
+    assert result.info["protean_reward_normalized"] == 0.65
+    assert result.info["hud_reward_correctness_floor"] == 1.0
     assert {subscore.name for subscore in result.subscores} == {
         "hud_reward",
+        "protean_reward",
         "correctness",
         "speedup",
         "held_out",
