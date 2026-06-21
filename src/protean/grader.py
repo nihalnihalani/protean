@@ -1,41 +1,126 @@
-"""Protean — stub extracted from docs/IMPLEMENTATION_PLAN.md (section 4). Fill in TODOs to implement."""
+"""Direct grader used by HUD, scripts, and future training code."""
 
-# grader.py — build EvaluationResult BY HAND. NEVER hud.graders.combine() (renormalizes, erases hard cap).
-from hud.graders import EvaluationResult, SubScore
+from __future__ import annotations
 
-import os
 import importlib.util
-from hud.graders import EvaluationResult, SubScore
-from .scenario_helpers import WORKSPACE_ROOT, hidden_dir
+from typing import Any
 
-def _load_grade_module(op_name, hidden_path):
-    grade_file = os.path.join(hidden_path, "grade.py")
-    spec = importlib.util.spec_from_file_location(f"grade_{op_name}", grade_file)
-    mod = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(mod)
-    return mod
+from protean.anti_hack import ast_clean, contains_triton_jit
+from protean.rewards import compute_reward
+from protean.splits import Split, shapes_for_split
+from protean.task_catalog import get_op
 
-def evaluate_kernel(op_name: str, split: str, seed: int) -> EvaluationResult:
-    # TWO-PATH DESIGN: hidden_dir() returns the in-package path for module loading by the privileged grader/trainer process.
-    # The /donotaccess/ path at the root of the filesystem is the canonical copy used for hash-integrity verification.
-    hidden = hidden_dir(op_name)
-    grade_mod = _load_grade_module(op_name, hidden)
+
+def _cuda_available() -> bool:
+    if importlib.util.find_spec("torch") is None:
+        return False
+    import torch
+
+    return bool(torch.cuda.is_available())
+
+
+def grade_source(
+    src: str,
+    *,
+    op: str = "elementwise_add_relu",
+    split: Split = "held_out",
+    shape: int | None = None,
+    reps: int = 50,
+    warmup: int = 10,
+) -> dict[str, Any]:
+    spec = get_op(op)
+    shape = shape or shapes_for_split(split)[0]
+
+    ok, reason = ast_clean(src)
+    if not ok:
+        return compute_reward(
+            correct=False,
+            speedup=0.0,
+            launches_timed=0,
+            dtype_ok=False,
+            shape_ok=False,
+            split=split,
+            caps=[reason],
+        ) | {"op": op, "shape": shape}
+
+    if not contains_triton_jit(src):
+        return compute_reward(
+            correct=False,
+            speedup=0.0,
+            launches_timed=0,
+            dtype_ok=False,
+            shape_ok=False,
+            split=split,
+            caps=["no_triton_jit"],
+        ) | {"op": op, "shape": shape}
+
+    if not _cuda_available():
+        return compute_reward(
+            correct=False,
+            speedup=0.0,
+            launches_timed=0,
+            dtype_ok=False,
+            shape_ok=False,
+            split=split,
+            caps=["cuda_unavailable"],
+        ) | {"op": op, "shape": shape}
+
+    from protean.bench_core import bench_source
+
+    bench = bench_source(src, n=shape, split=split, spec=spec, reps=reps, warmup=warmup)
+    grade = compute_reward(
+        correct=bench["correct"],
+        speedup=bench["speedup"],
+        launches_timed=bench["launches_timed"],
+        dtype_ok=bench["dtype_ok"],
+        shape_ok=bench["shape_ok"],
+        split=split,
+        t_eager_ms=bench["t_eager_ms"],
+        t_kernel_ms=bench["t_kernel_ms"],
+        pr_frac=bench.get("pr_frac", 0.0),
+    )
+    return grade | {"op": op, "shape": shape}
+
+
+def to_eval_result(grade_dict: dict):
+    raw_reward = float(grade_dict["reward"])
+    hud_reward = max(0.0, min(raw_reward / 2.0, 1.0))
+    correct = bool(grade_dict.get("correct", False)) and not grade_dict.get("caps")
+    speedup_score = max(0.0, min(float(grade_dict.get("speedup_score", 0.0)), 1.0))
+    held_out = 1.0 if grade_dict.get("split") == "held_out" and correct else 0.0
+    anti_hack = 1.0 if not grade_dict.get("caps") else 0.0
+    compile_success = 1.0 if "cuda_unavailable" not in grade_dict.get("caps", []) else 0.0
+    info = {
+        **grade_dict,
+        "protean_reward_raw": raw_reward,
+        "hud_reward_normalized": hud_reward,
+    }
     try:
-        r = grade_mod.grade(WORKSPACE_ROOT, None, hidden)
-    except Exception as exc:
-        return EvaluationResult(
-            score=0.0,
-            done=True,
-            content=f"{op_name}: ungraded ({exc})",
-            info={"hard_caps": ["grader_error"]},
-            subscores=[]
-        )
-    return to_eval_result(r)
+        from hud.graders import EvaluationResult, SubScore
+    except Exception:  # pragma: no cover - local tests should not require HUD.
+        from dataclasses import dataclass
 
-def to_eval_result(grade_dict: dict) -> EvaluationResult:
-    reward = grade_dict.get("reward", 0.0)
-    subs = [SubScore(name="reward", value=reward, weight=1.0)]
-    if grade_dict.get("caps") or grade_dict.get("hard_caps"):
-        # negative-weight hard-cap reconciliation (verilog grader.py pattern)
-        subs.append(SubScore(name="hard_cap_penalty", value=reward, weight=-1.0))
-    return EvaluationResult(score=reward, subscores=subs, info=grade_dict)
+        @dataclass
+        class SubScore:
+            name: str
+            value: float
+            weight: float
+
+        @dataclass
+        class EvaluationResult:
+            reward: float
+            subscores: list[SubScore]
+            info: dict
+
+    return EvaluationResult(
+        reward=hud_reward,
+        subscores=[
+            SubScore(name="hud_reward", value=hud_reward, weight=1.0),
+            SubScore(name="correctness", value=1.0 if correct else 0.0, weight=0.0),
+            SubScore(name="speedup", value=speedup_score, weight=0.0),
+            SubScore(name="held_out", value=held_out, weight=0.0),
+            SubScore(name="anti_hack", value=anti_hack, weight=0.0),
+            SubScore(name="compile_success", value=compile_success, weight=0.0),
+        ],
+        info=info,
+    )
