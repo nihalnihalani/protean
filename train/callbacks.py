@@ -11,6 +11,7 @@ from typing import Any
 try:
     from transformers import TrainerCallback
 except Exception:  # pragma: no cover - keeps CPU/dev tests dependency-light.
+
     class TrainerCallback:  # type: ignore[no-redef]
         pass
 
@@ -138,8 +139,10 @@ class RewardCurveLogger(TrainerCallback):
 
     def on_log(self, args: Any, state: Any, control: Any, logs: dict[str, Any] | None = None, **kwargs: Any) -> None:
         logs = logs or {}
-        train_reward = next((logs[k] for k in ("reward", "train_reward", "train/reward", "rewards/mean") if k in logs), None)
-        train_std = next((logs[k] for k in ("reward_std", "train_reward_std", "train/reward_std", "rewards/std") if k in logs), None)
+        _reward_keys = ("reward", "train_reward", "train/reward", "rewards/mean")
+        _std_keys = ("reward_std", "train_reward_std", "train/reward_std", "rewards/std")
+        train_reward = next((logs[k] for k in _reward_keys if k in logs), None)
+        train_std = next((logs[k] for k in _std_keys if k in logs), None)
         if train_reward is None:
             return
         self._history["steps"].append(int(state.global_step))

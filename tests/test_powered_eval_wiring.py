@@ -10,6 +10,7 @@ cannot reach p<=0.05 (best is 3/3 -> p=0.125), so the per-task hierarchical-boot
 power and sign_test_advisory is True. A synthetic report is never a REAL powered result: powered_real
 is always False for synthetic, and cuda_unavailable is None (inapplicable, no GPU path was exercised).
 """
+
 import json
 import math
 from pathlib import Path
@@ -20,7 +21,6 @@ from protean.eval_protocol import powered_eval_from_run_dir, synthetic_powered_r
 from protean.splits import (
     HELD_OUT_SHAPES,
     N_HELDOUT_PER_OP,
-    N_OPS,
     REAL_OPS,
     STRUCTURAL_ANCHORS,
     TILING_BLOCK,

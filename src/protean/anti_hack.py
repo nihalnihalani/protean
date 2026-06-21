@@ -202,10 +202,7 @@ def _handler_swallows(node: ast.ExceptHandler) -> bool:
     may legitimately validate shapes and re-raise. This narrows an earlier
     blanket ban on all try/except that produced false positives.
     """
-    for child in ast.walk(node):
-        if isinstance(child, ast.Return):
-            return True
-    return False
+    return any(isinstance(child, ast.Return) for child in ast.walk(node))
 
 
 def ast_clean(src: str) -> tuple[bool, str]:
@@ -217,9 +214,8 @@ def ast_clean(src: str) -> tuple[bool, str]:
     for node in ast.walk(tree):
         # Ban only the swallow-and-return try/except timing-shell exploit; allow
         # benign handlers that re-raise. See _handler_swallows for rationale.
-        if isinstance(node, ast.ExceptHandler):
-            if _handler_swallows(node):
-                return False, "ast_ban:try_except"
+        if isinstance(node, ast.ExceptHandler) and _handler_swallows(node):
+            return False, "ast_ban:try_except"
 
         if isinstance(node, ast.Call):
             name = _dotted(node.func)

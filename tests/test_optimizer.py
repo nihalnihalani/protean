@@ -362,9 +362,7 @@ def test_bandit_patience_does_not_truncate_non_bandit_policies(tmp_path, monkeyp
         return {"rows": [], "correct_held_out": 3, "mean_held_out_speedup": 1.0, "mean_reward": 0.5}
 
     monkeypatch.setattr(optimizer, "evaluate_kernel", fake_evaluate_kernel)
-    result = run_optimization(
-        out_dir=tmp_path, max_rounds=3, edit_policy="local", bandit_patience=1
-    )
+    result = run_optimization(out_dir=tmp_path, max_rounds=3, edit_policy="local", bandit_patience=1)
 
     assert result["edit_policy"] == "local"
     assert result["stopped_early"] is False
@@ -461,9 +459,7 @@ def test_run_optimization_rejects_empty_op(tmp_path):
 def test_summary_carries_run_id_and_provenance_envelope(tmp_path, monkeypatch):
     _patch_eval(monkeypatch)
     # A fixed started_at avoids any wall-clock nondeterminism in the assertion.
-    result = run_optimization(
-        out_dir=tmp_path, max_rounds=1, run_id="fixedrun123", provenance_started_at=1700000000.0
-    )
+    result = run_optimization(out_dir=tmp_path, max_rounds=1, run_id="fixedrun123", provenance_started_at=1700000000.0)
     assert result["run_id"] == "fixedrun123"
     prov = result["provenance"]
     assert prov["run_id"] == "fixedrun123"

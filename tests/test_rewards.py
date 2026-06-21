@@ -109,10 +109,7 @@ def test_multiplicative_mode_keeps_informative_speedup_gradient():
     # max_reward clamp must NOT flatten the top of the range.
     cfg = replace(DEFAULT_CONFIG, pr_mode="multiplicative")
     speeds = [1.5, 2.0, 4.0, 8.0, 16.0, 20.0]
-    rewards = [
-        compute_reward(**_correct_kwargs(speedup=s, pr_frac=1.0), config=cfg)["reward"]
-        for s in speeds
-    ]
+    rewards = [compute_reward(**_correct_kwargs(speedup=s, pr_frac=1.0), config=cfg)["reward"] for s in speeds]
     for lo, hi in zip(rewards, rewards[1:]):
         assert hi > lo
     # And the top of the range stays at or under the bound (no clamp plateau).
@@ -173,9 +170,7 @@ def test_lower_bound_clamp_does_not_change_bonus_mode_values():
     # The clamp is a no-op for bonus mode (contributions are always >= 0).
     cfg = replace(DEFAULT_CONFIG, pr_mode="bonus")
     grade = compute_reward(**_correct_kwargs(speedup=4.0, pr_frac=0.3), config=cfg)
-    expected = (
-        grade["correctness_reward"] + grade["speedup_reward"] + grade["pr_reward"]
-    )
+    expected = grade["correctness_reward"] + grade["speedup_reward"] + grade["pr_reward"]
     assert grade["reward"] == round(min(expected, cfg.max_reward), 6)
 
 

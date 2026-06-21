@@ -8,7 +8,6 @@ from pathlib import Path
 
 from protean.grader import grade_source
 
-
 REWARDS_HASH = "<sha256 baked at image build>"
 
 
@@ -25,9 +24,10 @@ def _preflight_rewards_hash() -> None:
 
 def _parse(workdir, override=None, hidden_root=None):
     import json
+
     metadata_path = os.path.join(workdir, "metadata.json")
     if os.path.exists(metadata_path):
-        with open(metadata_path, "r", encoding="utf-8") as f:
+        with open(metadata_path, encoding="utf-8") as f:
             meta = json.load(f)
         op = meta.get("op_name", meta.get("op"))
         split = meta["split"]

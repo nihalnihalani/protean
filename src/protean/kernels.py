@@ -1,6 +1,6 @@
 """Candidate kernels used by smoke tests and the guaranteed demo path."""
 
-HAND_OPTIMIZED_ELEMENTWISE_ADD_RELU = r'''
+HAND_OPTIMIZED_ELEMENTWISE_ADD_RELU = r"""
 import torch
 import triton
 import triton.language as tl
@@ -24,10 +24,10 @@ def solution(x, y):
     grid = (triton.cdiv(n_elements, 1024),)
     _add_relu_kernel[grid](x, y, out, n_elements, block_size=1024)
     return out
-'''
+"""
 
 
-HAND_OPTIMIZED_RMSNORM = r'''
+HAND_OPTIMIZED_RMSNORM = r"""
 import torch
 import triton
 import triton.language as tl
@@ -55,10 +55,10 @@ def solution(x, weight):
     block_size = _next_power_of_2(n_elements)
     _rmsnorm_kernel[(1,)](x, weight, out, n_elements, block_size=block_size, eps=1e-5)
     return out
-'''
+"""
 
 
-HAND_OPTIMIZED_SOFTMAX_ROWS = r'''
+HAND_OPTIMIZED_SOFTMAX_ROWS = r"""
 import torch
 import triton
 import triton.language as tl
@@ -87,38 +87,38 @@ def solution(x):
     block_size = _next_power_of_2(n_cols)
     _softmax_rows_kernel[(n_rows,)](x, out, n_cols, block_size=block_size)
     return out
-'''
+"""
 
 
-PYTORCH_PASSTHROUGH = r'''
+PYTORCH_PASSTHROUGH = r"""
 import torch
 
 
 def solution(x, y):
     return torch.relu(x + y)
-'''
+"""
 
 
-PYTORCH_RMSNORM_PASSTHROUGH = r'''
+PYTORCH_RMSNORM_PASSTHROUGH = r"""
 import torch
 
 
 def solution(x, weight):
     x_f32 = x.float()
     return (x_f32 * torch.rsqrt(torch.mean(x_f32 * x_f32, dim=-1, keepdim=True) + 1e-5) * weight.float()).to(x.dtype)
-'''
+"""
 
 
-NO_LAUNCH = r'''
+NO_LAUNCH = r"""
 import torch
 
 
 def solution(x, y):
     return torch.empty_like(x)
-'''
+"""
 
 
-BAD_SHAPE_TRITON = r'''
+BAD_SHAPE_TRITON = r"""
 import torch
 import triton
 import triton.language as tl
@@ -133,7 +133,7 @@ def solution(x, y):
     out = torch.empty((1,), device=x.device, dtype=x.dtype)
     _noop_kernel[(1,)](x, out)
     return out
-'''
+"""
 
 # Op-specific seed kernels for multi-op optimization
 SEED_KERNELS = {

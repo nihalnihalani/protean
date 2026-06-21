@@ -89,7 +89,7 @@ def test_pr_frac_moves_reward():
 # --- G5: hardened anti-hack AST bans (all CPU-only, no CUDA needed) ----------
 
 
-_TORCH_OPS_ATEN_DISPATCH = '''
+_TORCH_OPS_ATEN_DISPATCH = """
 import torch
 import triton
 import triton.language as tl
@@ -104,10 +104,10 @@ def solution(x, y):
     # Delegates the real compute to the aten dispatcher, bypassing torch.relu /
     # torch.nn.functional.relu exact-match bans.
     return torch.ops.aten.relu.default(torch.ops.aten.add.default(x, y))
-'''
+"""
 
 
-_TORCH_OPS_RSQRT_DISPATCH = '''
+_TORCH_OPS_RSQRT_DISPATCH = """
 import torch
 import triton
 import triton.language as tl
@@ -120,10 +120,10 @@ def _decoy(x_ptr):
 
 def solution(x, weight):
     return torch.ops.aten.rsqrt.default(x)
-'''
+"""
 
 
-_TORCH_NN_FUNCTIONAL_CHAIN = '''
+_TORCH_NN_FUNCTIONAL_CHAIN = """
 import torch
 import triton
 import triton.language as tl
@@ -137,10 +137,10 @@ def _decoy(x_ptr):
 def solution(x, y):
     fn = torch.nn.functional.relu
     return fn(x + y)
-'''
+"""
 
 
-_TRY_EXCEPT_TIMING_SHELL = '''
+_TRY_EXCEPT_TIMING_SHELL = """
 import torch
 import triton
 import triton.language as tl
@@ -156,7 +156,7 @@ def solution(x, y):
         return _decoy(x)
     except Exception:
         return torch.empty_like(x)
-'''
+"""
 
 
 def test_torch_ops_aten_dispatch_banned_by_ast():
@@ -229,7 +229,7 @@ def test_launch_counter_fallback_when_hooks_unavailable(monkeypatch):
 # --- G5 hardening: delegation-via-import bypasses (CPU-only) -----------------
 
 
-_CTYPES_CUBLAS = '''
+_CTYPES_CUBLAS = """
 import torch
 import triton
 import triton.language as tl
@@ -244,10 +244,10 @@ def _decoy(x_ptr):
 def solution(x, y):
     lib = ctypes.cdll.LoadLibrary("libcublas.so")
     return x
-'''
+"""
 
 
-_FUNCTIONAL_ALIASED_IMPORT = '''
+_FUNCTIONAL_ALIASED_IMPORT = """
 import torch
 import triton
 import triton.language as tl
@@ -261,10 +261,10 @@ def _decoy(x_ptr):
 
 def solution(x, y):
     return F.relu(x + y)
-'''
+"""
 
 
-_FROM_TORCH_NN_IMPORT = '''
+_FROM_TORCH_NN_IMPORT = """
 import torch
 import triton
 import triton.language as tl
@@ -278,10 +278,10 @@ def _decoy(x_ptr):
 
 def solution(x, y):
     return F.relu(x + y)
-'''
+"""
 
 
-_FROM_TORCH_IMPORT_NN = '''
+_FROM_TORCH_IMPORT_NN = """
 import torch
 import triton
 import triton.language as tl
@@ -295,10 +295,10 @@ def _decoy(x_ptr):
 
 def solution(x, y):
     return nn.functional.relu(x + y)
-'''
+"""
 
 
-_NUMPY_HOST_ESCAPE = '''
+_NUMPY_HOST_ESCAPE = """
 import torch
 import triton
 import triton.language as tl
@@ -312,10 +312,10 @@ def _decoy(x_ptr):
 
 def solution(x, y):
     return torch.from_numpy(np.add(x.cpu().numpy(), y.cpu().numpy())).to(x.device)
-'''
+"""
 
 
-_FROM_TORCH_OPS_IMPORT_ATEN = '''
+_FROM_TORCH_OPS_IMPORT_ATEN = """
 import torch
 import triton
 import triton.language as tl
@@ -329,10 +329,10 @@ def _decoy(x_ptr):
 
 def solution(x, y):
     return aten.add.default(x, y)
-'''
+"""
 
 
-_TRY_EXCEPT_RERAISE_OK = '''
+_TRY_EXCEPT_RERAISE_OK = """
 import torch
 import triton
 import triton.language as tl
@@ -350,10 +350,10 @@ def solution(x, y):
     except Exception:
         raise
     return out
-'''
+"""
 
 
-_TRY_EXCEPT_HELPER_SWALLOW = '''
+_TRY_EXCEPT_HELPER_SWALLOW = """
 import torch
 import triton
 import triton.language as tl
@@ -373,7 +373,7 @@ def _shape_fallback(x):
 
 def solution(x, y):
     return _shape_fallback(x)
-'''
+"""
 
 
 def test_ctypes_cublas_delegation_banned():
@@ -613,11 +613,7 @@ def test_load_solution_tombstones_sys_modules(monkeypatch):
     module = bench_core.load_solution(src)
     assert module.solution("ok") == "ok"  # compiled function still callable
 
-    new_candidate_names = [
-        name
-        for name in (set(sys.modules) - before)
-        if name.startswith("protean_candidate_")
-    ]
+    new_candidate_names = [name for name in (set(sys.modules) - before) if name.startswith("protean_candidate_")]
     assert new_candidate_names == [], "candidate module leaked into sys.modules"
 
 

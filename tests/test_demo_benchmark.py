@@ -65,14 +65,10 @@ def _run(args: list[str], tmp_path: Path) -> tuple[int, list[dict], str]:
 def test_all_ops_covers_every_public_op(tmp_path):
     code, rows, md = _run(["--all-ops"], tmp_path)
     # CPU-only -> exit 2 (cuda_unavailable); a real GPU -> 0/1 (never 2).
-    assert code in _ALLOWED_EXIT_CODES, (
-        f"unexpected exit code {code}; cuda_present={_cuda_present()}"
-    )
+    assert code in _ALLOWED_EXIT_CODES, f"unexpected exit code {code}; cuda_present={_cuda_present()}"
 
     ops_in_report = {row["op"] for row in rows}
-    assert ops_in_report == set(SEED_KERNELS), (
-        f"combined report missing ops: {set(SEED_KERNELS) - ops_in_report}"
-    )
+    assert ops_in_report == set(SEED_KERNELS), f"combined report missing ops: {set(SEED_KERNELS) - ops_in_report}"
 
     # Every op is graded across both splits and all shapes.
     expected_per_op = len(TRAIN_SHAPES) + len(HELD_OUT_SHAPES)
@@ -97,9 +93,7 @@ def test_all_ops_rows_have_required_fields(tmp_path):
 
 def test_single_op_mode_unchanged(tmp_path):
     code, rows, md = _run(["--op", "rmsnorm"], tmp_path)
-    assert code in _ALLOWED_EXIT_CODES, (
-        f"unexpected exit code {code}; cuda_present={_cuda_present()}"
-    )
+    assert code in _ALLOWED_EXIT_CODES, f"unexpected exit code {code}; cuda_present={_cuda_present()}"
     # Single-op mode grades exactly one op across both splits.
     assert {r["op"] for r in rows} == {"rmsnorm"}
     expected = len(TRAIN_SHAPES) + len(HELD_OUT_SHAPES)

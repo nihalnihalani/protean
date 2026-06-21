@@ -89,20 +89,14 @@ def test_partial_cache_splits_prompt_tokens():
     }
     # 1M prompt, half cached, no completion:
     # 0.5M * 1.0 + 0.5M * 0.25 = 0.5 + 0.125 = 0.625
-    cost = compute_fireworks_cost(
-        "m", 1_000_000, 0, cached_tokens=500_000, pricing=pricing
-    )
+    cost = compute_fireworks_cost("m", 1_000_000, 0, cached_tokens=500_000, pricing=pricing)
     assert cost == 0.625
 
 
 def test_cached_without_config_rate_falls_back_to_input_rate():
     # 20b config has no cached rate; cached tokens bill at the full input rate.
-    full = compute_fireworks_cost(
-        "accounts/fireworks/models/gpt-oss-20b", 1_000_000, 0
-    )
-    cached = compute_fireworks_cost(
-        "accounts/fireworks/models/gpt-oss-20b", 1_000_000, 0, cached_tokens=1_000_000
-    )
+    full = compute_fireworks_cost("accounts/fireworks/models/gpt-oss-20b", 1_000_000, 0)
+    cached = compute_fireworks_cost("accounts/fireworks/models/gpt-oss-20b", 1_000_000, 0, cached_tokens=1_000_000)
     assert cached == full
 
 
@@ -120,16 +114,12 @@ def test_cached_tokens_clamped_to_prompt_tokens():
 
 
 def test_detailed_reports_pricing_miss_on_unknown_model():
-    result = compute_fireworks_cost_detailed(
-        "accounts/fireworks/models/does-not-exist", 100, 100
-    )
+    result = compute_fireworks_cost_detailed("accounts/fireworks/models/does-not-exist", 100, 100)
     assert result.pricing_miss is True
     assert result.cost_usd == 0.0
 
 
 def test_detailed_no_miss_on_known_model():
-    result = compute_fireworks_cost_detailed(
-        "accounts/fireworks/models/gpt-oss-120b", 1_000_000, 1_000_000
-    )
+    result = compute_fireworks_cost_detailed("accounts/fireworks/models/gpt-oss-120b", 1_000_000, 1_000_000)
     assert result.pricing_miss is False
     assert result.cost_usd == 0.75

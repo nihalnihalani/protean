@@ -16,7 +16,6 @@ from protean.manifest import load_frozen_manifest
 from protean.sampler import l1_curriculum_pool, sample_task_curriculum
 from protean.task_catalog import OPS_BY_NAME
 
-
 ROOT = Path(__file__).resolve().parents[1]
 STEP_REF = [0]
 
@@ -160,6 +159,7 @@ def _make_held_out_eval_fn(trainer, dataset):
 
     def eval_fn(step: int, n_per_op: int) -> tuple[float, float]:
         import torch
+
         from protean.grader import grade_source
 
         rows = [row for row in _dataset_rows(dataset) if row["split"] == "held_out"]
@@ -212,7 +212,8 @@ def _make_base_model_runner(trainer):
                     top_p=0.95,
                     pad_token_id=tokenizer.eos_token_id,
                 )
-            completions.append(tokenizer.decode(output_ids[0][inputs["input_ids"].shape[1] :], skip_special_tokens=True))
+            new_tokens = output_ids[0][inputs["input_ids"].shape[1] :]
+            completions.append(tokenizer.decode(new_tokens, skip_special_tokens=True))
         return completions
 
     return runner

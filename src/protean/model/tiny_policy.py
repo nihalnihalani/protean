@@ -76,7 +76,7 @@ def state_features(state: dict | list | tuple) -> list[float]:
     ]
 
 
-def trloo_advantages(examples: list["TraceExample"]) -> list[float]:
+def trloo_advantages(examples: list[TraceExample]) -> list[float]:
     """TRLOO leave-one-out advantages, grouped by action.
 
     For each example, the baseline is the mean of the OTHER same-action
@@ -273,7 +273,7 @@ class TinyPolicyHead:
         }
 
     @classmethod
-    def from_dict(cls, payload: dict) -> "TinyPolicyHead":
+    def from_dict(cls, payload: dict) -> TinyPolicyHead:
         policy = cls(
             input_dim=int(payload["input_dim"]),
             hidden_dim=int(payload["hidden_dim"]),
@@ -292,7 +292,7 @@ class TinyPolicyHead:
         Path(path).write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n")
 
     @classmethod
-    def load(cls, path: str | Path) -> "TinyPolicyHead":
+    def load(cls, path: str | Path) -> TinyPolicyHead:
         return cls.from_dict(json.loads(Path(path).read_text()))
 
 

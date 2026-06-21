@@ -33,7 +33,7 @@ The single source of truth for "is it green" is the full suite on a CPU host:
 .venv/bin/python -m pytest -q
 ```
 
-The expected baseline is **`180 passed, 3 skipped`**. The three skipped tests are CUDA-only
+The expected baseline is **`262 passed, 5 skipped`**. The three skipped tests are CUDA-only
 correctness/timing checks and are expected to skip on a CPU host. **Do not let the passing count
 drop and do not add a test that requires CUDA to pass.**
 
@@ -44,7 +44,8 @@ uv run ruff check .
 uv run ruff format --check .
 ```
 
-Type checks:
+Type checks (**advisory — not a CI merge gate**; mypy currently reports ~49 findings, mostly
+missing return annotations, being driven down over time — do not add new ones):
 
 ```bash
 uv run mypy src/protean
@@ -63,7 +64,7 @@ pre-commit run --all-files
 
 Every change must satisfy all of these. CI and review will check them.
 
-1. **Keep all 180 tests green** (`180 passed, 3 skipped` on CPU). New behavior gets new tests.
+1. **Keep all 262 tests green** (`262 passed, 5 skipped` on CPU). New behavior gets new tests.
 2. **No public-API drift.** Do not change the `grade_source` signature, the `splits` public
    symbols, or the `eval_protocol` public functions. New parameters must be keyword-only with
    defaults, and new dict keys must be additive (never remove existing keys).
@@ -106,12 +107,24 @@ This project is deliberately conservative about claims.
 - **Title**: concise and imperative, e.g. `anti_hack: ban concurrency import roots`.
 - **Description** should state:
   - what changed and why (link the relevant `docs/IMPROVEMENT_RESEARCH.md` item if applicable),
-  - the test result line (`180 passed, 3 skipped`),
+  - the test result line (`262 passed, 5 skipped`),
   - any new public dict keys / keyword-only params (confirming no API drift),
   - whether any path is GPU-blocked and therefore only CPU-tested via mocks.
 - **Before requesting review**, confirm locally: tests green, `ruff check`/`ruff format --check`
-  clean, `mypy src/protean` clean, and `uv sync --locked` succeeds.
+  clean, and `uv sync --locked` succeeds. (`mypy src/protean` is advisory — don't add new findings.)
 - CI must be green before merge. Lint failures and lockfile drift are hard failures.
+
+## Environment variables
+
+Copy `.env.example` for the full list. Nothing is required to run the test suite or the
+deterministic/bandit optimizer; secrets are only needed per-feature.
+
+| Variable | Needed for | Notes |
+|---|---|---|
+| `HUD_API_KEY` | HUD eval / streaming / deploy | prefer `hud set HUD_API_KEY=...` or `export`; do not `source .env` |
+| `FIREWORKS_API_KEY` | `--edit-policy fireworks` only | not needed for deterministic/bandit/learned policies |
+| `TRITON_CACHE_DIR` | GPU runs | baked to `/triton-cache` in `Dockerfile.hud` |
+| `PROTEAN_*` | optional tuning | `MAX_STEPS`, `LOG`, `DISABLE_VLLM`, `SKIP_CALIBRATION`, … (all defaulted) |
 
 ## Where things live
 
@@ -123,7 +136,7 @@ This project is deliberately conservative about claims.
 | `src/protean/rewards.py` | Reward math (log-speedup, profiling-ratio shaping). |
 | `src/protean/splits.py` | Train vs off-grid held-out shape splits. |
 | `src/protean/eval_protocol.py` | Paired delta, bootstrap CI, sign test, power/MDE. |
-| `tests/` | CPU-only test suite (180 pass, 3 skip). |
+| `tests/` | CPU-only test suite (262 pass, 5 skip). |
 | `scripts/` | Smoke verifiers, optimizer runner, powered-eval, manifest freeze. |
 | `docs/PRODUCTION_READINESS.md` | Honest production-readiness accounting + runbook. |
 | `docs/IMPROVEMENT_RESEARCH.md` | Ranked roadmap with cited sources. |

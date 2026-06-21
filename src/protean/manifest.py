@@ -21,7 +21,7 @@ import json
 import os
 import platform
 import sys
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 from protean.sampler import sample_task
@@ -130,7 +130,7 @@ def _runtime_provenance() -> dict:
     except importlib.metadata.PackageNotFoundError:
         version = None
     return {
-        "created_at": datetime.now(tz=timezone.utc).isoformat(),
+        "created_at": datetime.now(tz=UTC).isoformat(),
         "python_version": sys.version,
         "platform": platform.platform(),
         "protean_version": version,
@@ -248,8 +248,7 @@ def _validate_meta(p: Path, meta: dict, rows: list[dict] | None = None) -> None:
         declared_rows = meta.get("n_rows")
         if declared_rows is not None and declared_rows != len(rows):
             raise RuntimeError(
-                f"Manifest row count mismatch for {p}: sidecar records "
-                f"{declared_rows} rows, file has {len(rows)}."
+                f"Manifest row count mismatch for {p}: sidecar records {declared_rows} rows, file has {len(rows)}."
             )
 
 

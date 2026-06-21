@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import json
 import math
-from pathlib import Path
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 
@@ -76,9 +76,7 @@ def load_reward_config() -> RewardConfig:
         max_reward=float(data.get("MAX_REWARD", data.get("max_reward", DEFAULT_CONFIG.max_reward))),
         pr_mode=str(data.get("PR_MODE", data.get("pr_mode", DEFAULT_CONFIG.pr_mode))),
         pr_center=float(data.get("PR_CENTER", data.get("pr_center", DEFAULT_CONFIG.pr_center))),
-        pr_frac_gate=float(
-            data.get("PR_FRAC_GATE", data.get("pr_frac_gate", DEFAULT_CONFIG.pr_frac_gate))
-        ),
+        pr_frac_gate=float(data.get("PR_FRAC_GATE", data.get("pr_frac_gate", DEFAULT_CONFIG.pr_frac_gate))),
     )
 
 

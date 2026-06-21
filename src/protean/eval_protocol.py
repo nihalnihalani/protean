@@ -10,37 +10,63 @@ Design (docs/TECHNICAL_SPEC.md §5.4):
 
 Pure-Python (no numpy/scipy). Rewards must come from the single grader authority; this module only aggregates.
 """
+
 from __future__ import annotations
 
 import math
 import random
 from collections import defaultdict
-from typing import Callable
+from collections.abc import Callable
 
-from protean.splits import N_OPS, N_HELDOUT_PER_OP, REAL_OPS, sample_heldout_shape
+from protean.splits import N_HELDOUT_PER_OP, N_OPS, REAL_OPS, sample_heldout_shape
 
 
 # ---- normal quantile (Acklam) for power/MDE math ----
 def _norm_ppf(p: float) -> float:
     if not 0.0 < p < 1.0:
         raise ValueError("p in (0,1)")
-    a = [-3.969683028665376e+01, 2.209460984245205e+02, -2.759285104469687e+02,
-         1.383577518672690e+02, -3.066479806614716e+01, 2.506628277459239e+00]
-    b = [-5.447609879822406e+01, 1.615858368580409e+02, -1.556989798598866e+02,
-         6.680131188771972e+01, -1.328068155288572e+01]
-    c = [-7.784894002430293e-03, -3.223964580411365e-01, -2.400758277161838e+00,
-         -2.549732539343734e+00, 4.374664141464968e+00, 2.938163982698783e+00]
-    d = [7.784695709041462e-03, 3.224671290700398e-01, 2.445134137142996e+00, 3.754408661907416e+00]
+    a = [
+        -3.969683028665376e01,
+        2.209460984245205e02,
+        -2.759285104469687e02,
+        1.383577518672690e02,
+        -3.066479806614716e01,
+        2.506628277459239e00,
+    ]
+    b = [
+        -5.447609879822406e01,
+        1.615858368580409e02,
+        -1.556989798598866e02,
+        6.680131188771972e01,
+        -1.328068155288572e01,
+    ]
+    c = [
+        -7.784894002430293e-03,
+        -3.223964580411365e-01,
+        -2.400758277161838e00,
+        -2.549732539343734e00,
+        4.374664141464968e00,
+        2.938163982698783e00,
+    ]
+    d = [7.784695709041462e-03, 3.224671290700398e-01, 2.445134137142996e00, 3.754408661907416e00]
     plow, phigh = 0.02425, 1 - 0.02425
     if p < plow:
         q = math.sqrt(-2 * math.log(p))
-        return (((((c[0]*q+c[1])*q+c[2])*q+c[3])*q+c[4])*q+c[5]) / ((((d[0]*q+d[1])*q+d[2])*q+d[3])*q+1)
+        return (((((c[0] * q + c[1]) * q + c[2]) * q + c[3]) * q + c[4]) * q + c[5]) / (
+            (((d[0] * q + d[1]) * q + d[2]) * q + d[3]) * q + 1
+        )
     if p > phigh:
         q = math.sqrt(-2 * math.log(1 - p))
-        return -(((((c[0]*q+c[1])*q+c[2])*q+c[3])*q+c[4])*q+c[5]) / ((((d[0]*q+d[1])*q+d[2])*q+d[3])*q+1)
+        return -(((((c[0] * q + c[1]) * q + c[2]) * q + c[3]) * q + c[4]) * q + c[5]) / (
+            (((d[0] * q + d[1]) * q + d[2]) * q + d[3]) * q + 1
+        )
     q = p - 0.5
     r = q * q
-    return (((((a[0]*r+a[1])*r+a[2])*r+a[3])*r+a[4])*r+a[5])*q / (((((b[0]*r+b[1])*r+b[2])*r+b[3])*r+b[4])*r+1)
+    return (
+        (((((a[0] * r + a[1]) * r + a[2]) * r + a[3]) * r + a[4]) * r + a[5])
+        * q
+        / (((((b[0] * r + b[1]) * r + b[2]) * r + b[3]) * r + b[4]) * r + 1)
+    )
 
 
 def mde_paired(n: int, alpha: float = 0.05, power: float = 0.80) -> float:
@@ -65,8 +91,7 @@ def power_at(n: int, d_z: float, alpha: float = 0.05) -> float:
     return max(0.0, min(1.0, _norm_cdf(ncp - _norm_ppf(1 - alpha / 2))))
 
 
-def power_curve(d_z: float, ns: list | None = None, alpha: float = 0.05,
-                power: float = 0.80) -> dict:
+def power_curve(d_z: float, ns: list | None = None, alpha: float = 0.05, power: float = 0.80) -> dict:
     """Power vs sample-size curve for a fixed standardized effect d_z (pure CPU; no GPU, no grader).
 
     Returns {"d_z", "alpha", "target_power", "n_for_target", "curve": [(n, power), ...]} where `curve`
@@ -78,14 +103,16 @@ def power_curve(d_z: float, ns: list | None = None, alpha: float = 0.05,
     if ns is None:
         ns = [3, 5, 10, 25, 50, 100, 150, 200]
     return {
-        "d_z": d_z, "alpha": alpha, "target_power": power,
+        "d_z": d_z,
+        "alpha": alpha,
+        "target_power": power,
         "n_for_target": required_n_paired(d_z, alpha=alpha, power=power),
         "curve": [(n, power_at(n, d_z, alpha=alpha)) for n in ns],
     }
 
 
 def _binom_tail_ge(k: int, n: int, p: float = 0.5) -> float:
-    return sum(math.comb(n, j) * p**j * (1 - p)**(n - j) for j in range(k, n + 1))
+    return sum(math.comb(n, j) * p**j * (1 - p) ** (n - j) for j in range(k, n + 1))
 
 
 def across_op_sign_test(per_op_delta: dict) -> dict:
@@ -140,8 +167,9 @@ def _hi_index(p: float, B: int) -> int:
     return max(0, min(int(p * B) - 1, B - 1))
 
 
-def hierarchical_bootstrap_ci(deltas_by_op: dict, B: int = 10000, seed: int = 0, ci: float = 0.95,
-                              method: str = "percentile") -> dict:
+def hierarchical_bootstrap_ci(
+    deltas_by_op: dict, B: int = 10000, seed: int = 0, ci: float = 0.95, method: str = "percentile"
+) -> dict:
     """Hierarchical bootstrap CI on the grand mean of D (resample ops, then shapes within op).
 
     method:
@@ -217,8 +245,7 @@ def hierarchical_bootstrap_ci(deltas_by_op: dict, B: int = 10000, seed: int = 0,
         lo = boots[_lo_index((1 - ci) / 2, B)]
         hi = boots[_hi_index((1 + ci) / 2, B)]
 
-    return {"gap": point, "ci_lo": lo, "ci_hi": hi, "excludes_zero": (lo > 0 or hi < 0),
-            "ci_method": used}
+    return {"gap": point, "ci_lo": lo, "ci_hi": hi, "excludes_zero": (lo > 0 or hi < 0), "ci_method": used}
 
 
 def build_eval_set(ops: list, n_per_op: int = N_HELDOUT_PER_OP, seed: int = 0) -> list:
@@ -227,20 +254,21 @@ def build_eval_set(ops: list, n_per_op: int = N_HELDOUT_PER_OP, seed: int = 0) -
     for op in ops:
         rng = random.Random(int(__import__("hashlib").sha256(f"{op}|{seed}".encode()).hexdigest()[:16], 16))
         for idx in range(n_per_op):
-            tasks.append({"op": op, "idx": idx, "shape": sample_heldout_shape(rng),
-                          "dtype": "float16", "split": "held_out"})
+            tasks.append(
+                {"op": op, "idx": idx, "shape": sample_heldout_shape(rng), "dtype": "float16", "split": "held_out"}
+            )
     return tasks
 
 
 def _crn_seed(base_seed: int, op, idx, k: int) -> int:
     """Deterministic per-(task, rollout-index) seed for common-random-numbers pairing."""
     import hashlib
+
     h = hashlib.sha256(f"{base_seed}|{op}|{idx}|{k}".encode()).hexdigest()[:16]
     return int(h, 16)
 
 
-def evaluate_policy(grade_fn: Callable, tasks: list, rollouts: int = 8,
-                    crn_seed: int | None = None) -> dict:
+def evaluate_policy(grade_fn: Callable, tasks: list, rollouts: int = 8, crn_seed: int | None = None) -> dict:
     """Per-task MEAN reward over `rollouts` samples. grade_fn(task)->reward in [0,2]. Key = (op, idx).
 
     Common-Random-Numbers (CRN) variance reduction for paired evaluation: when `crn_seed` is provided,
@@ -259,14 +287,12 @@ def evaluate_policy(grade_fn: Callable, tasks: list, rollouts: int = 8,
         if crn_seed is None:
             rs = [grade_fn(t) for _ in range(rollouts)]
         else:
-            rs = [grade_fn(t, rollout_seed=_crn_seed(crn_seed, t["op"], t["idx"], k))
-                  for k in range(rollouts)]
+            rs = [grade_fn(t, rollout_seed=_crn_seed(crn_seed, t["op"], t["idx"], k)) for k in range(rollouts)]
         out[(t["op"], t["idx"])] = sum(rs) / len(rs)
     return out
 
 
-def paired_report(base: dict, trained: dict, B: int = 10000, boot_seed: int = 0,
-                  ci_method: str = "percentile") -> dict:
+def paired_report(base: dict, trained: dict, B: int = 10000, boot_seed: int = 0, ci_method: str = "percentile") -> dict:
     """Money report: paired per-task deltas -> hierarchical bootstrap CI + across-op sign test + power.
 
     `boot_seed` controls the bootstrap resampling RNG (default 0 preserves prior behavior). Callers that
@@ -278,7 +304,7 @@ def paired_report(base: dict, trained: dict, B: int = 10000, boot_seed: int = 0,
     """
     keys = sorted(set(base) & set(trained))
     by_op = defaultdict(list)
-    for (op, idx) in keys:
+    for op, idx in keys:
         by_op[op].append(trained[(op, idx)] - base[(op, idx)])
     per_op = {op: sum(d) / len(d) for op, d in by_op.items()}
     all_d = [v for d in by_op.values() for v in d]
@@ -287,11 +313,14 @@ def paired_report(base: dict, trained: dict, B: int = 10000, boot_seed: int = 0,
     n = len(all_d)
     sd = _std(all_d)
     return {
-        "n_tasks": n, "n_ops": len(by_op),
-        "gap_mean": boot["gap"], "ci95": (boot["ci_lo"], boot["ci_hi"]),
+        "n_tasks": n,
+        "n_ops": len(by_op),
+        "gap_mean": boot["gap"],
+        "ci95": (boot["ci_lo"], boot["ci_hi"]),
         "gap_ci_excludes_zero": boot["excludes_zero"],
         "ci_method": boot["ci_method"],
-        "per_op_delta": per_op, "sign_test": sign,
+        "per_op_delta": per_op,
+        "sign_test": sign,
         "observed_dz": (sum(all_d) / n) / sd if sd > 0 else float("inf"),
         "mde_dz_at_n": mde_paired(n),
         "powered": boot["excludes_zero"] or sign["p_one_sided"] <= 0.05,
@@ -307,12 +336,14 @@ def paired_report(base: dict, trained: dict, B: int = 10000, boot_seed: int = 0,
 def grade_reward(source: str, op: str, shape: int, reps: int = 50, warmup: int = 10) -> tuple:
     """Return (reward, caps) from the real grader. reward=0.0 on cuda_unavailable / any cap."""
     from protean.grader import grade_source
+
     g = grade_source(source, op=op, split="held_out", shape=shape, reps=reps, warmup=warmup)
     return float(g.get("reward", 0.0)), list(g.get("caps", []))
 
 
-def evaluate_sources(sources_by_op: dict, n_per_op: int = N_HELDOUT_PER_OP,
-                     reps: int = 50, warmup: int = 10, seed: int = 0) -> tuple:
+def evaluate_sources(
+    sources_by_op: dict, n_per_op: int = N_HELDOUT_PER_OP, reps: int = 50, warmup: int = 10, seed: int = 0
+) -> tuple:
     """Grade one fixed kernel source per op across the powered continuous held-out set.
 
     sources_by_op: {op_name -> kernel_source}. Returns ({(op,idx)->reward}, tasks, caps_seen).
@@ -327,8 +358,15 @@ def evaluate_sources(sources_by_op: dict, n_per_op: int = N_HELDOUT_PER_OP,
     return rewards, tasks, caps_seen
 
 
-def paired_sources_report(base_sources: dict, trained_sources: dict, n_per_op: int = N_HELDOUT_PER_OP,
-                          reps: int = 50, warmup: int = 10, seed: int = 0, B: int = 10000) -> dict:
+def paired_sources_report(
+    base_sources: dict,
+    trained_sources: dict,
+    n_per_op: int = N_HELDOUT_PER_OP,
+    reps: int = 50,
+    warmup: int = 10,
+    seed: int = 0,
+    B: int = 10000,
+) -> dict:
     """End-to-end powered comparison of two fixed kernels-per-op via the real grader.
 
     Use on a GPU box: e.g. base = seed kernels, trained = optimizer best kernels. With only the 2 real
@@ -347,8 +385,10 @@ def paired_sources_report(base_sources: dict, trained_sources: dict, n_per_op: i
     # generalization design needs >=2 ops. powered_real is the field downstream readers should trust.
     if rep["n_ops"] < 2:
         rep["powered_real"] = False
-        rep["powered_real_note"] = ("only 1 op graded — across-op generalization cannot be supported; "
-                                    "powered reflects the single-op CI only, not the moat claim.")
+        rep["powered_real_note"] = (
+            "only 1 op graded — across-op generalization cannot be supported; "
+            "powered reflects the single-op CI only, not the moat claim."
+        )
     else:
         rep["powered_real"] = bool(rep["powered"]) and not rep["cuda_unavailable"]
     return rep
@@ -359,8 +399,15 @@ def paired_sources_report(base_sources: dict, trained_sources: dict, n_per_op: i
 # `run_dir` is produced by protean.optimizer.run_optimization (writes best_kernel_<op>.py per op).
 # GPU-only at run time (delegates to the real grader); the optimizer can call this for final reporting.
 # ---------------------------------------------------------------------------
-def powered_eval_from_run_dir(run_dir, ops: list, n_per_op: int = N_HELDOUT_PER_OP,
-                              reps: int = 50, warmup: int = 10, seed: int = 0, B: int = 10000) -> dict:
+def powered_eval_from_run_dir(
+    run_dir,
+    ops: list,
+    n_per_op: int = N_HELDOUT_PER_OP,
+    reps: int = 50,
+    warmup: int = 10,
+    seed: int = 0,
+    B: int = 10000,
+) -> dict:
     """Powered base(seed)-vs-trained(best) report using kernels from an optimizer run dir.
 
     For each op, base = protean.kernels.seed_kernel_for(op); trained = run_dir/best_kernel_<op>.py
@@ -382,8 +429,9 @@ def powered_eval_from_run_dir(run_dir, ops: list, n_per_op: int = N_HELDOUT_PER_
         base_sources[op] = seed_kernel_for(op)
         best = run / f"best_kernel_{op}.py"
         trained_sources[op] = best.read_text() if best.exists() else seed_kernel_for(op)
-    rep = paired_sources_report(base_sources, trained_sources, n_per_op=n_per_op,
-                                reps=reps, warmup=warmup, seed=seed, B=B)
+    rep = paired_sources_report(
+        base_sources, trained_sources, n_per_op=n_per_op, reps=reps, warmup=warmup, seed=seed, B=B
+    )
     rep["run_dir"] = str(run)
     rep["ops"] = list(ops)
     return rep
@@ -395,9 +443,16 @@ def powered_eval_from_run_dir(run_dir, ops: list, n_per_op: int = N_HELDOUT_PER_
 # Deterministic given `seed`; uses the SAME paired_report machinery as the real path, so the
 # statistical shape (n=200, hierarchical bootstrap CI, across-op sign test) is identical.
 # ---------------------------------------------------------------------------
-def synthetic_powered_report(ops: list | None = None, effect: float = 0.22, base_level: float = 0.45,
-                             op_spread: float = 0.10, noise: float = 0.20, rollouts: int = 8,
-                             seed: int = 1234, B: int = 10000) -> dict:
+def synthetic_powered_report(
+    ops: list | None = None,
+    effect: float = 0.22,
+    base_level: float = 0.45,
+    op_spread: float = 0.10,
+    noise: float = 0.20,
+    rollouts: int = 8,
+    seed: int = 1234,
+    B: int = 10000,
+) -> dict:
     """Build a fully-shaped, deterministic powered report from a synthetic effect (NO grader / NO GPU).
 
     Models a plausible base-vs-trained improvement (mean per-task delta ~ `effect` reward units) with
@@ -428,21 +483,31 @@ def synthetic_powered_report(ops: list | None = None, effect: float = 0.22, base
     tasks = build_eval_set(ops, seed=0)
     off = {op: rng.gauss(0, op_spread) for op in ops}
     base = evaluate_policy(
-        lambda t: max(0.0, base_level + off[t["op"]] + rng.gauss(0, noise)), tasks, rollouts=rollouts)
+        lambda t: max(0.0, base_level + off[t["op"]] + rng.gauss(0, noise)), tasks, rollouts=rollouts
+    )
     trained = evaluate_policy(
-        lambda t: max(0.0, base_level + effect + off[t["op"]] + rng.gauss(0, noise)), tasks, rollouts=rollouts)
+        lambda t: max(0.0, base_level + effect + off[t["op"]] + rng.gauss(0, noise)), tasks, rollouts=rollouts
+    )
     rep = paired_report(base, trained, B=B, boot_seed=seed)
     rep["synthetic"] = True
     rep["powered_real"] = False  # a synthetic report is never a real powered result
-    rep["synthetic_params"] = {"effect": effect, "base_level": base_level, "op_spread": op_spread,
-                              "noise": noise, "rollouts": rollouts, "seed": seed}
+    rep["synthetic_params"] = {
+        "effect": effect,
+        "base_level": base_level,
+        "op_spread": op_spread,
+        "noise": noise,
+        "rollouts": rollouts,
+        "seed": seed,
+    }
     rep["ops"] = list(ops)
     rep["caps_seen"] = []
     rep["cuda_unavailable"] = None  # inapplicable for a synthetic (no-GPU) report
     rep["sign_test_advisory"] = rep["n_ops"] < N_OPS
-    rep["note"] = ("SYNTHETIC artifact for plumbing/demo only — NOT measured GPU results "
-                   "(powered_real=false). Reproduce real numbers with scripts/run_powered_eval.py "
-                   "--run-dir <optimizer-run> on a GPU box; it grades the SAME real ops via the grader.")
+    rep["note"] = (
+        "SYNTHETIC artifact for plumbing/demo only — NOT measured GPU results "
+        "(powered_real=false). Reproduce real numbers with scripts/run_powered_eval.py "
+        "--run-dir <optimizer-run> on a GPU box; it grades the SAME real ops via the grader."
+    )
     return rep
 
 
@@ -453,10 +518,12 @@ if __name__ == "__main__":
     print(f"eval set: {len(tasks)} held-out tasks / {N_OPS} ops; sample shapes: {[t['shape'] for t in tasks[:6]]}")
     op_off = {op: rng.gauss(0, 0.15) for op in ops}
     EFFECT = 0.18
-    base_g = lambda t: max(0.0, 0.30 + op_off[t["op"]] + rng.gauss(0, 0.25))      # noqa: E731
+    base_g = lambda t: max(0.0, 0.30 + op_off[t["op"]] + rng.gauss(0, 0.25))  # noqa: E731
     train_g = lambda t: max(0.0, 0.30 + EFFECT + op_off[t["op"]] + rng.gauss(0, 0.25))  # noqa: E731
     rep = paired_report(evaluate_policy(base_g, tasks), evaluate_policy(train_g, tasks), B=5000)
-    print(f"Gap={rep['gap_mean']:.4f}  95%CI=[{rep['ci95'][0]:.4f},{rep['ci95'][1]:.4f}]  excl0={rep['gap_ci_excludes_zero']}")
-    print(f"sign test: {rep['sign_test']['positive']}/{rep['sign_test']['ops']} ops, p={rep['sign_test']['p_one_sided']:.4f}")
-    print(f"observed d_z={rep['observed_dz']:.3f}  MDE@n={rep['n_tasks']}={rep['mde_dz_at_n']:.3f}  POWERED={rep['powered']}")
+    ci, st = rep["ci95"], rep["sign_test"]
+    print(f"Gap={rep['gap_mean']:.4f}  95%CI=[{ci[0]:.4f},{ci[1]:.4f}]  excl0={rep['gap_ci_excludes_zero']}")
+    print(f"sign test: {st['positive']}/{st['ops']} ops, p={st['p_one_sided']:.4f}")
+    n, dz, mde = rep["n_tasks"], rep["observed_dz"], rep["mde_dz_at_n"]
+    print(f"observed d_z={dz:.3f}  MDE@n={n}={mde:.3f}  POWERED={rep['powered']}")
     print(f"MDE @ old n=3 = {mde_paired(3):.3f}  ->  @ n={rep['n_tasks']} = {mde_paired(rep['n_tasks']):.3f}")

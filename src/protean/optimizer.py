@@ -19,7 +19,7 @@ import uuid
 from pathlib import Path
 
 from protean.grader import ProteanError, ProteanValidationError, grade_source
-from protean.kernels import HAND_OPTIMIZED_ELEMENTWISE_ADD_RELU, seed_kernel_for
+from protean.kernels import seed_kernel_for
 from protean.model.policy import (
     config_action_space,
     effective_action_space,
@@ -264,11 +264,7 @@ def evaluate_kernel(
     rows = []
     for split, shapes in (("train", TRAIN_SHAPES), ("held_out", HELD_OUT_SHAPES)):
         for shape in shapes:
-            rows.append(
-                grade_source(
-                    source, op=op, split=split, shape=shape, reps=reps, warmup=warmup, run_id=run_id
-                )
-            )
+            rows.append(grade_source(source, op=op, split=split, shape=shape, reps=reps, warmup=warmup, run_id=run_id))
 
     held_out = [row for row in rows if row["split"] == "held_out"]
     correct_held_out = [row for row in held_out if row["correct"] and not row["caps"]]
@@ -365,9 +361,7 @@ def run_optimization(
     provenance_started_at: float | None = None,
 ) -> dict:
     if edit_policy not in _VALID_EDIT_POLICIES:
-        raise ProteanValidationError(
-            f"edit_policy {edit_policy!r} must be one of {list(_VALID_EDIT_POLICIES)}"
-        )
+        raise ProteanValidationError(f"edit_policy {edit_policy!r} must be one of {list(_VALID_EDIT_POLICIES)}")
     if not isinstance(max_rounds, int) or isinstance(max_rounds, bool) or max_rounds < 1:
         raise ProteanValidationError(f"max_rounds={max_rounds!r} must be an integer >= 1")
     if not isinstance(op, str) or not op:

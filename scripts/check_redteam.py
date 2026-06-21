@@ -13,7 +13,6 @@ sys.path.insert(0, str(ROOT / "src"))
 from protean.grader import grade_source
 from protean.kernels import BAD_SHAPE_TRITON, NO_LAUNCH, PYTORCH_PASSTHROUGH
 
-
 CASES = {
     "pytorch_passthrough": PYTORCH_PASSTHROUGH,
     "no_launch": NO_LAUNCH,

@@ -1,6 +1,6 @@
 # Ruff configuration for Protean.
 # Canonical lint/format config (takes precedence over any [tool.ruff] in pyproject.toml).
-line-length = 99
+line-length = 120
 target-version = "py311"
 exclude = [".venv", "build", "dist", "__pycache__"]
 
@@ -10,11 +10,12 @@ exclude = [".venv", "build", "dist", "__pycache__"]
 select = ["E", "F", "W", "I", "UP", "B", "SIM"]
 # B008: function call in default arg (false positives on argparse/dataclass patterns).
 # SIM105: contextlib.suppress is not always clearer than try/except/pass.
-ignore = ["B008", "SIM105"]
+# B905: zip(strict=) — opt out; call sites zip equal-length sequences by construction.
+ignore = ["B008", "SIM105", "B905"]
 
 [lint.per-file-ignores]
-# Tests favour readability over line length.
-"tests/**/*.py" = ["E501"]
+# Tests favour readability: long lines, lambda fixtures, imports after a sys.path insert.
+"tests/**/*.py" = ["E501", "E731", "E402"]
 # Scripts insert src/ onto sys.path before importing protean (module-level import-not-at-top).
 "scripts/**/*.py" = ["E402"]
 

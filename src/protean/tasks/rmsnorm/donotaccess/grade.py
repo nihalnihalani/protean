@@ -7,7 +7,6 @@ from pathlib import Path
 
 from protean.grader import grade_source
 
-
 REWARDS_HASH = "<sha256 baked at image build>"
 
 

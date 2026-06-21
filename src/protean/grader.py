@@ -105,9 +105,7 @@ def _resolve_reward_config() -> tuple[RewardConfig, bool]:
         return DEFAULT_CONFIG, True
 
 
-def _validate_grade_inputs(
-    src: str, op: str, split: Split, shape: int | None, reps: int, warmup: int
-) -> None:
+def _validate_grade_inputs(src: str, op: str, split: Split, shape: int | None, reps: int, warmup: int) -> None:
     """Guard the public ``grade_source`` contract with typed errors.
 
     These checks fire before any I/O, CUDA, or compilation so callers get a

@@ -1,17 +1,19 @@
+import importlib.util
 import os
 import sys
-import importlib.util
+
 import pytest
 
 sys.path.insert(0, "src")
 
-from protean.task_catalog import OPS, OPS_BY_NAME
+from protean.task_catalog import OPS_BY_NAME
 
 HAS_TORCH = importlib.util.find_spec("torch") is not None
 
 
 def _load_reference_module():
     from pathlib import Path
+
     path = Path(__file__).parent.parent / "src" / "protean" / "tasks" / "softmax_rows" / "donotaccess" / "reference.py"
     if not path.exists():
         return None
@@ -46,6 +48,7 @@ def test_softmax_reference_imports():
 
 def test_manifest_includes_both_ops():
     from protean.manifest import load_frozen_manifest
+
     rows = load_frozen_manifest("manifest_v1.jsonl")
     op_names = {row["op"] for row in rows}
     assert "elementwise_add_relu" in op_names
@@ -57,9 +60,10 @@ def test_softmax_eager_runs_on_cpu():
     """Sanity: the reference can at least construct the right shape on CPU.
     Full CUDA correctness is tested at Modal smoke-test time."""
     import torch
+
     ref = _load_reference_module()
     assert ref is not None
-    
+
     x = torch.randn(64, 128, dtype=torch.float32)  # use fp32 + cpu for test
     out = ref.eager_fn(x)
     assert out.shape == x.shape

@@ -8,7 +8,6 @@ import os
 from pathlib import Path
 from statistics import pstdev
 
-
 REWARDS_HASH = "<sha256 baked at image build>"
 CANONICAL_REWARDS = Path("/donotaccess/rewards.py")
 CANONICAL_CONFIG = Path("/donotaccess/reward_config.json")
@@ -89,9 +88,11 @@ def calibrate(tasks=None, base_model_runner=None) -> str:
 
     # Preflight KNOWN_GOOD / KNOWN_BAD verification for registered ops
     import torch
+
     if torch.cuda.is_available():
-        from protean.kernels import HAND_OPTIMIZED_ELEMENTWISE_ADD_RELU
         import importlib.util
+
+        from protean.kernels import HAND_OPTIMIZED_ELEMENTWISE_ADD_RELU
 
         def _load_grade_kernel(op_name: str):
             local_path = ROOT / "src" / "protean" / "tasks" / op_name / "donotaccess" / "grade.py"
@@ -106,6 +107,7 @@ def calibrate(tasks=None, base_model_runner=None) -> str:
                         gk = mod.grade_kernel
                         return lambda op, shape_m, shape_n, dtype, src: gk(op, shape_n, dtype, src)
             from protean.grader import grade_source
+
             return lambda op, shape_m, shape_n, dtype, src: grade_source(src, op=op, shape=shape_n)
 
         KNOWN_GOOD_KERNELS = {
@@ -170,9 +172,7 @@ def solution(x):
     rewards = [float(row.get("reward", 0.0)) for row in rollouts]
     reward_std = pstdev(rewards) if len(rewards) > 1 else 0.0
     tasks_with_speedup = {
-        idx
-        for idx, row in enumerate(rollouts)
-        if row.get("correct") and float(row.get("speedup", 0.0)) >= 1.0
+        idx for idx, row in enumerate(rollouts) if row.get("correct") and float(row.get("speedup", 0.0)) >= 1.0
     }
 
     print(

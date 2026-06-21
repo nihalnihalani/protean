@@ -8,8 +8,8 @@ same CandidateEdit records.
 from __future__ import annotations
 
 import re
+from collections.abc import Iterable
 from dataclasses import dataclass
-from typing import Iterable
 
 from protean.model.harness import harness_for_kernel_edit
 from protean.model.tiny_policy import ACTION_BLOCK_SIZES, TinyPolicyHead, action_index, state_features
@@ -58,10 +58,7 @@ def block_size_is_tunable(source: str) -> bool:
     pattern directly rather than guessing from the op name.
     """
 
-    return bool(
-        re.search(r"block_size\s*=\s*\d+", source)
-        or re.search(r"triton\.cdiv\(n_elements,\s*\d+\)", source)
-    )
+    return bool(re.search(r"block_size\s*=\s*\d+", source) or re.search(r"triton\.cdiv\(n_elements,\s*\d+\)", source))
 
 
 def _strip_launch_meta(body: str) -> str:
@@ -96,10 +93,7 @@ def make_config_edit(current_best: str, block_size: int, num_warps: int, num_sta
     source = _replace_warps_and_stages(source, num_warps, num_stages)
     return CandidateEdit(
         name=f"config_b{block_size}_w{num_warps}_s{num_stages}",
-        reason=(
-            f"Tune launch config: block_size={block_size}, "
-            f"num_warps={num_warps}, num_stages={num_stages}."
-        ),
+        reason=(f"Tune launch config: block_size={block_size}, num_warps={num_warps}, num_stages={num_stages}."),
         source=source,
         harness=harness_for_kernel_edit(),
         policy="bandit_config",
@@ -155,7 +149,11 @@ def local_kernel_edits(current_best: str) -> Iterable[CandidateEdit]:
         )
 
 
-def learned_kernel_edits(current_best: str, best_state: dict | tuple[float, float, int], policy_path: str) -> Iterable[CandidateEdit]:
+def learned_kernel_edits(
+    current_best: str,
+    best_state: dict | tuple[float, float, int],
+    policy_path: str,
+) -> Iterable[CandidateEdit]:
     """Order deterministic edits with a trained policy head."""
 
     policy = TinyPolicyHead.load(policy_path)

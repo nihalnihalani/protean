@@ -2,13 +2,13 @@
 
 from __future__ import annotations
 
+import importlib.util
 import os
 import random
 import statistics
+import sys
 import tempfile
 import uuid
-import importlib.util
-import sys
 from pathlib import Path
 
 try:
@@ -20,11 +20,11 @@ except Exception:  # pragma: no cover - CPU-only unit tests can still import hel
     triton = None
     tl = None
 
+from protean.anti_hack import _audit_import_hook as _audit_import_hook  # re-export
 from protean.anti_hack import (
     contains_triton_jit,
     install_audit_hook,
 )
-from protean.anti_hack import _audit_import_hook as _audit_import_hook  # re-export
 from protean.task_catalog import OpSpec
 
 # The PEP 578 import audit hook lives in anti_hack and is armed lazily by
@@ -179,7 +179,7 @@ class _TritonLaunchCounter:
             return self._prev_hook(*args, **kwargs)
         return None
 
-    def __enter__(self) -> "_TritonLaunchCounter":
+    def __enter__(self) -> _TritonLaunchCounter:
         if self.available():
             try:
                 self._prev_hook = self._knobs.launch_enter_hook
@@ -338,9 +338,7 @@ def _bootstrap_speedup_ci(
     return (_pct(0.05), _pct(0.95))
 
 
-def _time_cuda_graph_raw(
-    fn, args: tuple[torch.Tensor, ...], reps: int, warmup: int
-) -> list[float] | None:
+def _time_cuda_graph_raw(fn, args: tuple[torch.Tensor, ...], reps: int, warmup: int) -> list[float] | None:
     """CUDA-graph-captured replay timing for sub-10us kernels.
 
     For very fast kernels, per-launch CPU dispatch overhead dominates the CUDA
@@ -576,9 +574,7 @@ def bench_source(
     multi_init_ok = False
     if correct_pre and correct_post:
         try:
-            multi_init_ok = _check_correct_multi_init(
-                solution, eager_fn, n=n, spec=spec, seeds=(101, 202, 303)
-            )
+            multi_init_ok = _check_correct_multi_init(solution, eager_fn, n=n, spec=spec, seeds=(101, 202, 303))
         except Exception:
             multi_init_ok = False
         if not multi_init_ok:

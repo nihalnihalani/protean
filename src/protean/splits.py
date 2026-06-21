@@ -39,8 +39,8 @@ assert_disjoint()
 # held-out shapes sampled below — see protean.eval_protocol + docs/TECHNICAL_SPEC.md §5.4.
 # Purely additive: does not change the dev-shape API the MVP/tests rely on.
 
-N_OPS = 5                       # spread the claim over >=5 ops (clustering-immune across-op sign test)
-N_HELDOUT_PER_OP = 40           # 5 x 40 = 200 paired held-out tasks (was 3)
+N_OPS = 5  # spread the claim over >=5 ops (clustering-immune across-op sign test)
+N_HELDOUT_PER_OP = 40  # 5 x 40 = 200 paired held-out tasks (was 3)
 
 # The ops that are ACTUALLY IMPLEMENTED (have a kernel, grader, and task dir). N_OPS=5 is the
 # clustering-immune TARGET width for the across-op sign test; REAL_OPS is the subset that exists
@@ -48,10 +48,10 @@ N_HELDOUT_PER_OP = 40           # 5 x 40 = 200 paired held-out tasks (was 3)
 # must use REAL_OPS so it cannot crash on a non-existent op (see task_catalog.OPS). The synthetic
 # demo report also uses REAL_OPS so its GPU regen command does not reference fictional ops.
 REAL_OPS = ("elementwise_add_relu", "rmsnorm", "softmax_rows")
-TILING_BLOCK = 64               # continuous draws must be off this grid too (structural novelty)
+TILING_BLOCK = 64  # continuous draws must be off this grid too (structural novelty)
 
-_INTERP_BAND = (min(TRAIN_SHAPES) + 1, max(TRAIN_SHAPES) - 1)    # interpolate between train points
-_EXTRAP_BAND = (max(TRAIN_SHAPES) + 1, 4 * max(TRAIN_SHAPES))     # extrapolate beyond max train
+_INTERP_BAND = (min(TRAIN_SHAPES) + 1, max(TRAIN_SHAPES) - 1)  # interpolate between train points
+_EXTRAP_BAND = (max(TRAIN_SHAPES) + 1, 4 * max(TRAIN_SHAPES))  # extrapolate beyond max train
 _INTERP_FRACTION = 0.6
 # Structural anchors always graded (tiling-boundary + prime-adjacent). These are a PROPER SUPERSET of
 # the dev HELD_OUT_SHAPES: the three dev shapes PLUS additional off-grid near-block-boundary shapes that

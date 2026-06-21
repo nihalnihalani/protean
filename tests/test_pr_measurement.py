@@ -152,9 +152,7 @@ def test_time_cuda_graph_raw_returns_none_when_cuda_unavailable(monkeypatch):
 
 
 def test_time_cuda_graph_raw_returns_none_without_cudagraph_attr(monkeypatch):
-    monkeypatch.setattr(
-        bench_core, "torch", _fake_torch(cuda_available=True, has_cudagraph=False)
-    )
+    monkeypatch.setattr(bench_core, "torch", _fake_torch(cuda_available=True, has_cudagraph=False))
     monkeypatch.setattr(bench_core, "triton", object())
     monkeypatch.setattr(bench_core, "tl", object())
     monkeypatch.setattr(bench_core, "_ensure_triton_cache_dir", lambda: None)
@@ -185,9 +183,7 @@ _SPEC = OpSpec(
 
 
 def _install_fake_allclose(monkeypatch):
-    fake_torch = SimpleNamespace(
-        allclose=lambda a, b, rtol, atol: a.value == b.value
-    )
+    fake_torch = SimpleNamespace(allclose=lambda a, b, rtol, atol: a.value == b.value)
     monkeypatch.setattr(bench_core, "torch", fake_torch)
 
 
@@ -195,14 +191,10 @@ def test_check_correct_multi_init_passes_for_seed_invariant_kernel(monkeypatch):
     # make_inputs returns a per-seed sentinel; an honest kernel reproduces the
     # reference for every seed, so multi-init passes (no advisory).
     _install_fake_allclose(monkeypatch)
-    monkeypatch.setattr(
-        bench_core, "make_inputs", lambda n, dtype, seed, op: (_FakeTensor(seed),)
-    )
+    monkeypatch.setattr(bench_core, "make_inputs", lambda n, dtype, seed, op: (_FakeTensor(seed),))
     honest = lambda x: _FakeTensor(x.value)  # echoes the seed-dependent input
     eager = lambda x: _FakeTensor(x.value)
-    assert _check_correct_multi_init(
-        honest, eager, n=8, spec=_SPEC, seeds=(101, 202, 303)
-    ) is True
+    assert _check_correct_multi_init(honest, eager, n=8, spec=_SPEC, seeds=(101, 202, 303)) is True
 
 
 def test_check_correct_multi_init_fails_for_hardcoded_output(monkeypatch):
@@ -210,24 +202,15 @@ def test_check_correct_multi_init_fails_for_hardcoded_output(monkeypatch):
     # reference for one seed but diverges for the others -> multi-init fails,
     # which bench_source surfaces as the non-gating caps_advisory 'multi_init_fail'.
     _install_fake_allclose(monkeypatch)
-    monkeypatch.setattr(
-        bench_core, "make_inputs", lambda n, dtype, seed, op: (_FakeTensor(seed),)
-    )
+    monkeypatch.setattr(bench_core, "make_inputs", lambda n, dtype, seed, op: (_FakeTensor(seed),))
     cheat = lambda x: _FakeTensor(101)  # hardcoded to the first seed's output
     eager = lambda x: _FakeTensor(x.value)
-    assert _check_correct_multi_init(
-        cheat, eager, n=8, spec=_SPEC, seeds=(101, 202, 303)
-    ) is False
+    assert _check_correct_multi_init(cheat, eager, n=8, spec=_SPEC, seeds=(101, 202, 303)) is False
 
 
 def test_check_correct_multi_init_fails_on_dtype_mismatch(monkeypatch):
     _install_fake_allclose(monkeypatch)
-    monkeypatch.setattr(
-        bench_core, "make_inputs", lambda n, dtype, seed, op: (_FakeTensor(seed),)
-    )
+    monkeypatch.setattr(bench_core, "make_inputs", lambda n, dtype, seed, op: (_FakeTensor(seed),))
     wrong_dtype = lambda x: _FakeTensor(x.value, dtype="float32")
     eager = lambda x: _FakeTensor(x.value, dtype="float16")
-    assert _check_correct_multi_init(
-        wrong_dtype, eager, n=8, spec=_SPEC, seeds=(101,)
-    ) is False
-
+    assert _check_correct_multi_init(wrong_dtype, eager, n=8, spec=_SPEC, seeds=(101,)) is False

@@ -27,7 +27,6 @@ from protean.kernels import (
 )
 from protean.splits import HELD_OUT_SHAPES, TRAIN_SHAPES
 
-
 KERNELS = {
     "elementwise_add_relu": HAND_OPTIMIZED_ELEMENTWISE_ADD_RELU,
     "rmsnorm": HAND_OPTIMIZED_RMSNORM,
@@ -83,18 +82,12 @@ def main() -> int:
     if args.all_ops:
         kernels = ALL_OP_KERNELS
         title = "# Protean Combined Demo Benchmark"
-        subtitle = (
-            "All public ops. Base is PyTorch eager. Candidate is each op's "
-            "hand-optimized Triton seed kernel."
-        )
+        subtitle = "All public ops. Base is PyTorch eager. Candidate is each op's hand-optimized Triton seed kernel."
         with_op = True
     else:
         kernels = {args.op: KERNELS[args.op]}
         title = "# Protean Demo Benchmark"
-        subtitle = (
-            f"Op: `{args.op}`. Base is PyTorch eager. "
-            "Candidate is the hand-optimized Triton kernel."
-        )
+        subtitle = f"Op: `{args.op}`. Base is PyTorch eager. Candidate is the hand-optimized Triton kernel."
         with_op = False
 
     rows = _grade_rows(kernels, reps=args.reps, warmup=args.warmup)

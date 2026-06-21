@@ -1,13 +1,23 @@
 """Powered held-out evaluation protocol (resolves the n=24 underpowering)."""
+
 import random
 
 import pytest
 
 from protean.eval_protocol import (
-    build_eval_set, evaluate_policy, paired_report, mde_paired, required_n_paired, across_op_sign_test,
-    hierarchical_bootstrap_ci, power_at, power_curve, BCA_MIN_OPS, synthetic_powered_report,
+    BCA_MIN_OPS,
+    across_op_sign_test,
+    build_eval_set,
+    evaluate_policy,
+    hierarchical_bootstrap_ci,
+    mde_paired,
+    paired_report,
+    power_at,
+    power_curve,
+    required_n_paired,
+    synthetic_powered_report,
 )
-from protean.splits import N_OPS, N_HELDOUT_PER_OP, TRAIN_SHAPES, is_offgrid
+from protean.splits import N_HELDOUT_PER_OP, N_OPS, TRAIN_SHAPES, is_offgrid
 
 
 def test_eval_set_is_large_and_offgrid():
@@ -22,9 +32,9 @@ def test_eval_set_is_large_and_offgrid():
 
 
 def test_power_improves_with_n():
-    assert mde_paired(3) > mde_paired(200)          # bigger n -> smaller detectable effect
-    assert mde_paired(200) < 0.25                    # n=200 detects small-medium effects at 80% power
-    assert required_n_paired(0.4) == 50              # paired n for a medium standardized effect
+    assert mde_paired(3) > mde_paired(200)  # bigger n -> smaller detectable effect
+    assert mde_paired(200) < 0.25  # n=200 detects small-medium effects at 80% power
+    assert required_n_paired(0.4) == 50  # paired n for a medium standardized effect
 
 
 def test_sign_test_is_clustering_immune():
@@ -90,7 +100,10 @@ def test_bca_upper_bound_never_returns_lone_extreme_under_heavy_bias():
     # One op carries a large positive mean (drives the grand mean up), the rest cluster near zero.
     d = {
         "hot": [5.0] * 40,
-        "a": [0.0] * 40, "b": [0.0] * 40, "c": [0.0] * 40, "d": [0.0] * 40,
+        "a": [0.0] * 40,
+        "b": [0.0] * 40,
+        "c": [0.0] * 40,
+        "d": [0.0] * 40,
     }
     res = hierarchical_bootstrap_ci(d, B=3000, seed=0, method="bca")
     assert res["ci_method"] == "bca"
@@ -158,6 +171,7 @@ def test_crn_passes_rollout_seed_and_pairs_base_trained():
         def g(t, rollout_seed):
             store.setdefault((t["op"], t["idx"]), []).append(rollout_seed)
             return float(rollout_seed % 1000)
+
         return g
 
     base = evaluate_policy(grader(seen_base), tasks, rollouts=4, crn_seed=99)
@@ -179,6 +193,7 @@ def test_crn_variance_reduction_lowers_paired_delta_variance():
         def g(t, rollout_seed):
             r = random.Random(rollout_seed)
             return 0.4 + effect + r.gauss(0, 0.5)
+
         return g
 
     base = evaluate_policy(make(0.0), tasks, rollouts=8, crn_seed=2024)
@@ -195,6 +210,7 @@ def test_crn_variance_reduction_lowers_paired_delta_variance():
             counter[0] += 1
             r = random.Random(hash((t["op"], t["idx"], tag, counter[0])))
             return 0.4 + effect + r.gauss(0, 0.5)
+
         return g
 
     base_i = evaluate_policy(make_indep(0.0, "b"), tasks, rollouts=8)

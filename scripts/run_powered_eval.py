@@ -21,6 +21,7 @@ Usage:
   python scripts/run_powered_eval.py --run-dir runs/protean-fireworks-overnight \
       --ops elementwise_add_relu rmsnorm --n-per-op 40 --out demo/powered-eval-200.json
 """
+
 from __future__ import annotations
 
 import argparse
@@ -45,12 +46,15 @@ def _trained_source(op: str, trained_dir: str | None) -> str:
 
 def main() -> None:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--ops", nargs="+", default=None,
-                    help="ops to grade; default = all implemented ops (splits.REAL_OPS).")
-    ap.add_argument("--synthetic", action="store_true",
-                    help="CPU-safe: emit a labeled synthetic=true report (no GPU/grader).")
-    ap.add_argument("--run-dir", default=None,
-                    help="optimizer run dir with best_kernel_<op>.py (GPU base-seed-vs-best).")
+    ap.add_argument(
+        "--ops", nargs="+", default=None, help="ops to grade; default = all implemented ops (splits.REAL_OPS)."
+    )
+    ap.add_argument(
+        "--synthetic", action="store_true", help="CPU-safe: emit a labeled synthetic=true report (no GPU/grader)."
+    )
+    ap.add_argument(
+        "--run-dir", default=None, help="optimizer run dir with best_kernel_<op>.py (GPU base-seed-vs-best)."
+    )
     ap.add_argument("--trained-dir", default=None, help="legacy: dir with best_kernel_<op>.py")
     ap.add_argument("--n-per-op", type=int, default=40)
     ap.add_argument("--reps", type=int, default=50)
@@ -67,26 +71,33 @@ def main() -> None:
         # None -> synthetic_powered_report defaults to REAL_OPS; an explicit --ops is honored.
         rep = synthetic_powered_report(ops=args.ops, effect=args.effect, seed=args.seed, B=args.bootstrap)
     elif args.run_dir is not None:
-        rep = powered_eval_from_run_dir(args.run_dir, ops, n_per_op=args.n_per_op,
-                                        reps=args.reps, warmup=args.warmup, B=args.bootstrap)
+        rep = powered_eval_from_run_dir(
+            args.run_dir, ops, n_per_op=args.n_per_op, reps=args.reps, warmup=args.warmup, B=args.bootstrap
+        )
     else:
         base_sources = {op: seed_kernel_for(op) for op in ops}
         trained_sources = {op: _trained_source(op, args.trained_dir) for op in ops}
-        rep = paired_sources_report(base_sources, trained_sources, n_per_op=args.n_per_op,
-                                    reps=args.reps, warmup=args.warmup, B=args.bootstrap)
+        rep = paired_sources_report(
+            base_sources, trained_sources, n_per_op=args.n_per_op, reps=args.reps, warmup=args.warmup, B=args.bootstrap
+        )
 
-    print(f"ops={rep.get('ops', ops)}  n_tasks={rep['n_tasks']}  n_ops={rep['n_ops']}  "
-          f"synthetic={rep.get('synthetic')}  powered_real={rep.get('powered_real')}")
+    print(
+        f"ops={rep.get('ops', ops)}  n_tasks={rep['n_tasks']}  n_ops={rep['n_ops']}  "
+        f"synthetic={rep.get('synthetic')}  powered_real={rep.get('powered_real')}"
+    )
     if rep.get("cuda_unavailable"):
         print("⚠️  cuda_unavailable — run this on the GPU box; numbers below are placeholders.")
     if rep.get("synthetic"):
         print("⚠️  SYNTHETIC — labeled plumbing/demo artifact, NOT measured GPU results.")
-    print(f"Gap (mean Δ) = {rep['gap_mean']:.4f}   95% CI = [{rep['ci95'][0]:.4f}, {rep['ci95'][1]:.4f}]"
-          f"   excludes 0: {rep['gap_ci_excludes_zero']}")
+    print(
+        f"Gap (mean Δ) = {rep['gap_mean']:.4f}   95% CI = [{rep['ci95'][0]:.4f}, {rep['ci95'][1]:.4f}]"
+        f"   excludes 0: {rep['gap_ci_excludes_zero']}"
+    )
     st = rep["sign_test"]
     advisory = "  (advisory: K<5 ops)" if rep.get("sign_test_advisory") else ""
-    print(f"across-op sign test: {st['positive']}/{st['ops']} ops positive, "
-          f"p_one_sided={st['p_one_sided']:.4f}{advisory}")
+    print(
+        f"across-op sign test: {st['positive']}/{st['ops']} ops positive, p_one_sided={st['p_one_sided']:.4f}{advisory}"
+    )
     print(f"observed d_z={rep['observed_dz']:.3f}  vs  MDE d_z @ n={rep['n_tasks']} = {rep['mde_dz_at_n']:.3f}")
     print(f"POWERED: {rep['powered']}   caps_seen={rep.get('caps_seen', [])}")
 

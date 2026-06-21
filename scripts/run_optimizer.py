@@ -40,21 +40,24 @@ def main() -> int:
     parser.add_argument("--out-dir", default="runs/protean-overnight")
     parser.add_argument("--max-rounds", type=int, default=1)
     parser.add_argument("--op", default="elementwise_add_relu")
-    parser.add_argument("--all-ops", action="store_true",
-                        help="Run the optimizer on every registered op.")
+    parser.add_argument("--all-ops", action="store_true", help="Run the optimizer on every registered op.")
     parser.add_argument("--edit-policy", choices=["local", "learned", "fireworks"], default="local")
     parser.add_argument("--policy-path", help="Optional tiny policy JSON used to order kernel edits.")
-    parser.add_argument("--controller", default=None,
-                        help="Optional 1M policy-head JSON to log controller decisions during Fireworks/local runs.")
+    parser.add_argument(
+        "--controller",
+        default=None,
+        help="Optional 1M policy-head JSON to log controller decisions during Fireworks/local runs.",
+    )
     parser.add_argument("--fireworks-model", default=None)
-    parser.add_argument("--stream-hud", action="store_true",
-                        help="Stream every optimizer trial into one HUD job/session.")
+    parser.add_argument(
+        "--stream-hud", action="store_true", help="Stream every optimizer trial into one HUD job/session."
+    )
     parser.add_argument("--hud-env-source", default="src/protean/env.py")
     parser.add_argument("--hud-timeout", type=float, default=180.0)
-    parser.add_argument("--hud-job-name", default=None,
-                        help="HUD job/session name for optimizer trial streaming.")
-    parser.add_argument("--hud-group", type=int, default=1,
-                        help="Repeat each HUD task this many times per streamed trial.")
+    parser.add_argument("--hud-job-name", default=None, help="HUD job/session name for optimizer trial streaming.")
+    parser.add_argument(
+        "--hud-group", type=int, default=1, help="Repeat each HUD task this many times per streamed trial."
+    )
     args = parser.parse_args()
 
     ops_to_run = [op.name for op in OPS] if args.all_ops else [args.op]
@@ -96,7 +99,7 @@ def main() -> int:
         print("=== All Ops Summary ===")
         for op, result in results.items():
             best = result.get("best_score", [0, 0, 0])
-            print(f"  {op:30s}  score={best}  accepted={result.get('accepted',0)}/{result.get('trials',0)}")
+            print(f"  {op:30s}  score={best}  accepted={result.get('accepted', 0)}/{result.get('trials', 0)}")
 
     return 0
 

@@ -3,8 +3,8 @@ import json
 from protean.model.tiny_policy import (
     DEFAULT_HIDDEN_DIM,
     FEATURE_DIM,
-    TraceExample,
     TinyPolicyHead,
+    TraceExample,
     load_trace_examples,
     state_features,
     train_tiny_policy,

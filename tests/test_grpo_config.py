@@ -55,4 +55,3 @@ def test_vllm_disabled_for_smoke_test(monkeypatch):
     assert cfg.num_generations == 2
     assert cfg.use_vllm is False
     assert cfg.vllm_gpu_memory_utilization == 0.0
-
