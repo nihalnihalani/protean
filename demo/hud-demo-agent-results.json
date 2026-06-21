@@ -1,7 +1,7 @@
 {
-  "job_id": "1c97c74a9d25423bb7fea53b6f98846b",
-  "job_url": "https://hud.ai/jobs/1c97c74a9d25423bb7fea53b6f98846b",
-  "mean_reward": 0.8919585,
+  "job_id": "5a3ddc3f24a748d9abda38866bccb503",
+  "job_url": "https://hud.ai/jobs/5a3ddc3f24a748d9abda38866bccb503",
+  "mean_reward": 0.893904,
   "runs": [
     {
       "caps": [],
@@ -18,10 +18,10 @@
       "caps": [],
       "correct": true,
       "op": "elementwise_add_relu",
-      "reward": 0.478899,
+      "reward": 0.481687,
       "shape": 1024,
       "slug": "elementwise_add_relu_train",
-      "speedup": 1.554622,
+      "speedup": 1.563025,
       "split": "train",
       "status": "completed"
     },
@@ -29,10 +29,10 @@
       "caps": [],
       "correct": true,
       "op": "rmsnorm",
-      "reward": 1.249563,
+      "reward": 1.254557,
       "shape": 1536,
       "slug": "rmsnorm_held_out",
-      "speedup": 6.89916,
+      "speedup": 6.966101,
       "split": "held_out",
       "status": "completed"
     },

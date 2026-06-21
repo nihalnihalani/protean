@@ -171,14 +171,14 @@ Spark GB10, HUD demo agent:
 
 | Op | Split | Shape | Reward | Speedup |
 |---|---|---:|---:|---:|
-| `elementwise_add_relu` | train | 1024 | 0.479 | 1.55x |
+| `elementwise_add_relu` | train | 1024 | 0.482 | 1.56x |
 | `elementwise_add_relu` | held-out | 1536 | 0.628 | 2.08x |
 | `rmsnorm` | train | 1024 | 1.211 | 6.40x |
-| `rmsnorm` | held-out | 1536 | 1.250 | 6.90x |
+| `rmsnorm` | held-out | 1536 | 1.255 | 6.97x |
 
 Passing HUD job:
 
-https://hud.ai/jobs/1c97c74a9d25423bb7fea53b6f98846b
+https://hud.ai/jobs/5a3ddc3f24a748d9abda38866bccb503
 
 ## 10. Future Training Spec
 

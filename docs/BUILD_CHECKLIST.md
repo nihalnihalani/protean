@@ -43,7 +43,7 @@ python scripts/smoke_verifier.py --op rmsnorm
 
 - [x] HUD task discovery lists all four tasks.
 - [x] Deterministic Protean demo agent creates a HUD job with non-zero reward.
-- [x] Passing job: https://hud.ai/jobs/1c97c74a9d25423bb7fea53b6f98846b
+- [x] Passing job: https://hud.ai/jobs/5a3ddc3f24a748d9abda38866bccb503
 
 ```bash
 PYTHONPATH=src hud task list --source src/protean/env.py
@@ -53,10 +53,10 @@ HUD_API_KEY=... PYTHONPATH=src python scripts/run_hud_demo_agent.py
 Expected output shape:
 
 ```text
-mean_reward=0.892
+mean_reward=0.894
 elementwise_add_relu_held_out: reward=0.628 correct=True speedup=2.08x caps=[]
-elementwise_add_relu_train:    reward=0.479 correct=True speedup=1.55x caps=[]
-rmsnorm_held_out:              reward=1.250 correct=True speedup=6.90x caps=[]
+elementwise_add_relu_train:    reward=0.482 correct=True speedup=1.56x caps=[]
+rmsnorm_held_out:              reward=1.255 correct=True speedup=6.97x caps=[]
 rmsnorm_train:                 reward=1.211 correct=True speedup=6.40x caps=[]
 ```
 

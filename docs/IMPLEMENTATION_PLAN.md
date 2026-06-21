@@ -43,7 +43,7 @@ The HUD wrapper exposes four tasks and calls the direct Protean grader. The dete
 
 Passing job:
 
-https://hud.ai/jobs/1c97c74a9d25423bb7fea53b6f98846b
+https://hud.ai/jobs/5a3ddc3f24a748d9abda38866bccb503
 
 Acceptance:
 

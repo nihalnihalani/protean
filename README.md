@@ -13,7 +13,7 @@ Protean turns GPU-kernel optimization into a HUD task where every submitted kern
 | Area | Status | Evidence |
 |---|---|---|
 | GPU verifier | Working on Spark GB10 | `33 passed`, smoke verifier correct on both ops |
-| HUD dashboard | Working with speed-sensitive reward | [HUD passing job](https://hud.ai/jobs/1c97c74a9d25423bb7fea53b6f98846b) |
+| HUD dashboard | Working with speed-sensitive reward | [HUD passing job](https://hud.ai/jobs/5a3ddc3f24a748d9abda38866bccb503) |
 | Ops | `elementwise_add_relu`, `rmsnorm` | Both have PyTorch reference + hand Triton kernel |
 | Held-out split | Working | Train: `1024, 2048, 4096`; held-out: `1536, 3072, 5632` |
 | Anti-hack checks | Working | PyTorch passthrough, no-launch, bad-shape score zero |
@@ -27,10 +27,10 @@ Spark GB10, HUD demo agent, known-good Triton kernels, same HUD grader:
 
 | Task | Split | Shape | Reward | Correct | Speedup |
 |---|---|---:|---:|---|---:|
-| `elementwise_add_relu` | train | 1024 | 0.479 | true | 1.55x |
+| `elementwise_add_relu` | train | 1024 | 0.482 | true | 1.56x |
 | `elementwise_add_relu` | held-out | 1536 | 0.628 | true | 2.08x |
 | `rmsnorm` | train | 1024 | 1.211 | true | 6.40x |
-| `rmsnorm` | held-out | 1536 | 1.250 | true | 6.90x |
+| `rmsnorm` | held-out | 1536 | 1.255 | true | 6.97x |
 
 The important part is not that these are final state-of-the-art kernels. The important part is that HUD is grading real Triton code with the same verifier Protean uses locally.
 
@@ -131,7 +131,7 @@ python scripts/run_optimizer.py --edit-policy fireworks --all-ops --max-rounds 5
 
 | Artifact | Purpose |
 |---|---|
-| [HUD passing demo job](https://hud.ai/jobs/1c97c74a9d25423bb7fea53b6f98846b) | Shows speed-sensitive non-zero reward in HUD dashboard |
+| [HUD passing demo job](https://hud.ai/jobs/5a3ddc3f24a748d9abda38866bccb503) | Shows speed-sensitive non-zero reward in HUD dashboard |
 | [HUD generic-agent integration job](https://hud.ai/jobs/22314aa9438c4d41bb98edeadea29913) | Shows standard HUD eval path with a weak one-step agent |
 | `demo/hud-demo-agent-results.json` | Local copy of passing HUD demo results |
 | `demo/protean-demo-results.json` | Local benchmark artifact |
