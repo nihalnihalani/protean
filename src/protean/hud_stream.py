@@ -35,6 +35,20 @@ def _task_slugs_for_op(op: str) -> list[str]:
     return [f"{op}_train", f"{op}_held_out"]
 
 
+def _ensure_hud_api_key() -> None:
+    if os.environ.get("HUD_API_KEY"):
+        return
+    try:
+        from hud.settings import settings
+    except Exception:
+        settings = None
+    key = getattr(settings, "api_key", None) if settings is not None else None
+    if key:
+        os.environ["HUD_API_KEY"] = key
+        return
+    raise HudStreamError("HUD_API_KEY is required to stream optimizer trials to HUD")
+
+
 def _summary_metrics(summary: dict[str, Any], eval_error: dict[str, Any] | None) -> dict[str, Any]:
     rows = summary.get("rows", []) if isinstance(summary, dict) else []
     correct_rows = [row for row in rows if row.get("correct") and not row.get("caps")]
@@ -92,8 +106,7 @@ async def _start_session_async(name: str, group: int) -> HudStreamSession:
 def start_hud_stream_session(*, name: str | None = None, group: int = 1) -> HudStreamSession:
     """Create one HUD job for a whole optimizer run."""
 
-    if not os.environ.get("HUD_API_KEY"):
-        raise HudStreamError("HUD_API_KEY is required to stream optimizer trials to HUD")
+    _ensure_hud_api_key()
     job_name = name or f"protean-optimizer-{int(time.time())}"
     return asyncio.run(_start_session_async(job_name, group))
 
@@ -289,8 +302,7 @@ def stream_candidate_to_hud(
 ) -> dict[str, Any]:
     """Stream one optimizer trial candidate into HUD."""
 
-    if not os.environ.get("HUD_API_KEY"):
-        raise HudStreamError("HUD_API_KEY is required to stream optimizer trials to HUD")
+    _ensure_hud_api_key()
     env_path = Path(env_source)
     if not env_path.exists():
         raise HudStreamError(f"HUD env source does not exist: {env_path}")
