@@ -24,11 +24,22 @@ DEFAULT_CONFIG = RewardConfig()
 CANONICAL_CONFIG_PATH = Path("/donotaccess/reward_config.json")
 LOCAL_CONFIG_PATH = Path(__file__).with_name("reward_config.json")
 
+# Backward compatibility aliases for tests
+_CANONICAL_CFG_PATH = str(CANONICAL_CONFIG_PATH)
+_LOCAL_CFG_PATH = str(LOCAL_CONFIG_PATH)
+
 
 def _config_path() -> Path:
-    if CANONICAL_CONFIG_PATH.exists():
-        return CANONICAL_CONFIG_PATH
-    return LOCAL_CONFIG_PATH
+    if Path(_CANONICAL_CFG_PATH).exists():
+        return Path(_CANONICAL_CFG_PATH)
+    return Path(_LOCAL_CFG_PATH)
+
+
+def _cfg() -> dict[str, Any]:
+    path = _config_path()
+    if not path.exists():
+        raise FileNotFoundError(f"reward config is missing: {path}")
+    return json.loads(path.read_text())
 
 
 def load_reward_config() -> RewardConfig:
@@ -58,7 +69,7 @@ def compute_reward(
     launches_timed: int,
     dtype_ok: bool,
     shape_ok: bool,
-    split: str,
+    split: str = "train",
     t_eager_ms: float | None = None,
     t_kernel_ms: float | None = None,
     pr_frac: float = 0.0,
