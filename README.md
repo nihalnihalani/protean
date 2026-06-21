@@ -91,3 +91,4 @@ Hard failures get zero reward. Slow-but-correct kernels can report correctness, 
 
 KERNEL-FORGE notes live in `docs/strategy/KERNEL_FORGE_AUDIT.md`; they are background, not the build path.
 The daVinci-kernel paper is included under `docs/papers/` with `davinci-kernel-2606.16497.llm.txt` as the LLM-first reading companion.
+For implementation structure, read `docs/ARCHITECTURE.md`.
