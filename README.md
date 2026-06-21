@@ -18,7 +18,8 @@ Protean turns GPU-kernel optimization into a HUD task where every submitted kern
 | Held-out split | Working | Train: `1024, 2048, 4096`; held-out: `1536, 3072, 5632` |
 | Anti-hack checks | Working | PyTorch passthrough, no-launch, bad-shape score zero |
 | Optimizer loop | Working | Saves candidates, logs trials, accepts only strict improvements |
-| Fireworks backend | Wired, needs key for new overnight run | JSON mode, low reasoning, crash-safe logging |
+| HUD trial streaming | Working | Optional `--stream-hud` creates a HUD job for every optimizer trial |
+| Fireworks backend | Wired | JSON mode, low reasoning, crash-safe logging, HUD streaming ready |
 | Learned controller | Implemented as v1 1M policy head | Trains from verifier traces |
 
 ## Money Figure
@@ -102,6 +103,15 @@ Run the optimizer loop:
 python scripts/run_optimizer.py --all-ops --max-rounds 1
 ```
 
+Stream every optimizer trial to HUD:
+
+```bash
+export HUD_API_KEY=...
+python scripts/run_optimizer.py --edit-policy local --op elementwise_add_relu --max-rounds 1 --stream-hud
+```
+
+This creates one HUD eval job per trial candidate. The local `trials.jsonl` stays the continuous audit log, and each trial row records either `hud_stream.job_url` or `hud_stream_error`.
+
 Run the HUD passing demo:
 
 ```bash
@@ -115,7 +125,8 @@ Use Fireworks for model-generated edits:
 
 ```bash
 export FIREWORKS_API_KEY=...
-python scripts/run_optimizer.py --edit-policy fireworks --all-ops --max-rounds 5
+export HUD_API_KEY=...
+python scripts/run_optimizer.py --edit-policy fireworks --all-ops --max-rounds 5 --stream-hud
 ```
 
 ## Public HUD Tasks
@@ -132,6 +143,7 @@ python scripts/run_optimizer.py --edit-policy fireworks --all-ops --max-rounds 5
 | Artifact | Purpose |
 |---|---|
 | [HUD passing demo job](https://hud.ai/jobs/5a3ddc3f24a748d9abda38866bccb503) | Shows speed-sensitive non-zero reward in HUD dashboard |
+| [HUD optimizer-trial stream job](https://hud.ai/jobs/3203cf74fb314cb29b32389e1a22531d) | One candidate from a Spark optimizer run streamed to HUD |
 | [HUD generic-agent integration job](https://hud.ai/jobs/22314aa9438c4d41bb98edeadea29913) | Shows standard HUD eval path with a weak one-step agent |
 | `demo/hud-demo-agent-results.json` | Local copy of passing HUD demo results |
 | `demo/protean-demo-results.json` | Local benchmark artifact |
@@ -166,6 +178,7 @@ Hard failures get reward `0.0`. Correct kernels get a small correctness floor pl
 | `src/protean/grader.py` | Direct verifier entrypoint and HUD result adapter |
 | `src/protean/bench_core.py` | CUDA correctness and timing harness |
 | `src/protean/env.py` | HUD wrapper exposing four task ids |
+| `src/protean/hud_stream.py` | Per-trial HUD eval job streaming for optimizer candidates |
 | `src/protean/optimizer.py` | Iterative candidate generation, evaluation, accept/reject, logging |
 | `src/protean/kernels.py` | Known-good kernels and red-team examples |
 | `src/protean/model/` | Policy, RL layer, Fireworks backend, 1M learned head |
@@ -179,7 +192,7 @@ Protean does not yet claim that a trained model beats every hand-optimized kerne
 
 ## Next
 
-1. Run Fireworks overnight with `FIREWORKS_API_KEY` on Spark.
-2. Keep every generated candidate and rejected compile/runtime error in `trials.jsonl`.
+1. Run Fireworks overnight with `FIREWORKS_API_KEY` and `HUD_API_KEY` on Spark.
+2. Stream every candidate to HUD with `--stream-hud` and keep `hud_stream.job_url` in `trials.jsonl`.
 3. Train the 1M policy head from those traces.
 4. Compare deterministic, Fireworks, and learned-policy edit ordering on held-out shapes.

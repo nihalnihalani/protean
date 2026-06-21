@@ -25,6 +25,10 @@ def main() -> int:
     parser.add_argument("--edit-policy", choices=["local", "learned", "fireworks"], default="local")
     parser.add_argument("--policy-path", help="Optional tiny policy JSON used to order kernel edits.")
     parser.add_argument("--fireworks-model", default=None)
+    parser.add_argument("--stream-hud", action="store_true",
+                        help="Create a HUD eval job for every optimizer trial candidate.")
+    parser.add_argument("--hud-env-source", default="src/protean/env.py")
+    parser.add_argument("--hud-timeout", type=float, default=180.0)
     args = parser.parse_args()
 
     ops_to_run = [op.name for op in OPS] if args.all_ops else [args.op]
@@ -38,6 +42,9 @@ def main() -> int:
             edit_policy=args.edit_policy,
             policy_path=args.policy_path,
             fireworks_model=args.fireworks_model,
+            stream_hud=args.stream_hud,
+            hud_env_source=args.hud_env_source,
+            hud_timeout=args.hud_timeout,
         )
         results[op] = result
 

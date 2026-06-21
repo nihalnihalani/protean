@@ -63,12 +63,21 @@ Status: implemented and verified.
 - Accepts only strict improvements.
 - Logs every trial to JSONL.
 - Converts verifier crashes into rejected trial records.
+- Optionally streams every trial candidate to HUD.
 
 Acceptance:
 
 ```bash
 python scripts/run_optimizer.py --all-ops --max-rounds 1
 ```
+
+HUD streaming acceptance:
+
+```bash
+HUD_API_KEY=... python scripts/run_optimizer.py --op elementwise_add_relu --max-rounds 1 --stream-hud
+```
+
+This creates one HUD eval job per candidate. Each trial row records either `hud_stream.job_url` or `hud_stream_error`, so local/Spark optimizer runs and HUD dashboard artifacts stay linked without making HUD failures kill the optimizer.
 
 ## Layer 4: Model-Backed Edits
 
@@ -87,7 +96,8 @@ Next run:
 
 ```bash
 export FIREWORKS_API_KEY=...
-python scripts/run_optimizer.py --edit-policy fireworks --all-ops --max-rounds 20 --out-dir runs/protean-fireworks-overnight
+export HUD_API_KEY=...
+python scripts/run_optimizer.py --edit-policy fireworks --all-ops --max-rounds 20 --stream-hud --out-dir runs/protean-fireworks-overnight
 ```
 
 ## Layer 5: Learned Policy Head

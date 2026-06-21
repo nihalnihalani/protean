@@ -66,9 +66,11 @@ rmsnorm_train:                 reward=1.211 correct=True speedup=6.40x caps=[]
 - [x] Candidates are written to `runs/.../candidates/`.
 - [x] Trial records are written to `trials.jsonl`.
 - [x] Compile/runtime failures are logged as rejected trials.
+- [x] Optional HUD streaming records `hud_stream.job_url` or `hud_stream_error` per trial.
 
 ```bash
 python scripts/run_optimizer.py --all-ops --max-rounds 1 --out-dir runs/protean-hud-preflight
+HUD_API_KEY=... python scripts/run_optimizer.py --op elementwise_add_relu --max-rounds 1 --stream-hud --out-dir runs/protean-hud-stream-smoke
 ```
 
 Verified Spark output:
@@ -78,13 +80,24 @@ elementwise_add_relu  accepted=1/5
 rmsnorm               accepted=0/5
 ```
 
+Verified HUD stream smoke:
+
+```text
+trial 1 -> https://hud.ai/jobs/3203cf74fb314cb29b32389e1a22531d
+trial 2 -> https://hud.ai/jobs/f58885c88d77479ab182eb9dd123651f
+trial 3 -> https://hud.ai/jobs/ae685277145d472c9030386957be8ce6
+trial 4 -> https://hud.ai/jobs/42e800d337b545ac90021be2b08c3cfd
+trial 5 -> https://hud.ai/jobs/41b4bc655ac34c2487f435c19c389054
+```
+
 ## Fireworks Overnight Run
 
-Blocked until `FIREWORKS_API_KEY` is present on Spark.
+Requires `FIREWORKS_API_KEY`. Add `HUD_API_KEY` and `--stream-hud` when every trial should appear in the HUD dashboard.
 
 ```bash
 export FIREWORKS_API_KEY=...
-python scripts/run_optimizer.py --edit-policy fireworks --all-ops --max-rounds 20 --out-dir runs/protean-fireworks-overnight
+export HUD_API_KEY=...
+python scripts/run_optimizer.py --edit-policy fireworks --all-ops --max-rounds 20 --stream-hud --out-dir runs/protean-fireworks-overnight
 ```
 
 Acceptance criteria:
@@ -92,4 +105,5 @@ Acceptance criteria:
 - [ ] Every Fireworks candidate source is saved.
 - [ ] Every trial is logged.
 - [ ] Compile/runtime errors appear as `eval_error` and rejected, not lost.
+- [ ] Every trial has either `hud_stream.job_url` or `hud_stream_error`.
 - [ ] Summary shows accepted count, best score, tokens, and model cost metadata.

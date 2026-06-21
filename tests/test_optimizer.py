@@ -1,4 +1,6 @@
 import json
+import sys
+import types
 
 from protean.kernels import HAND_OPTIMIZED_ELEMENTWISE_ADD_RELU
 from protean.model.policy import local_kernel_edits
@@ -53,3 +55,70 @@ def test_optimizer_logs_rejected_trial_when_candidate_eval_crashes(tmp_path, mon
     assert trial["summary"]["eval_error"] == trial["eval_error"]
     assert trial["score"] == [0.0, 0.0, 0]
     assert (tmp_path / trial["source_path"]).exists()
+
+
+def test_optimizer_streams_each_trial_to_hud_when_enabled(tmp_path, monkeypatch):
+    import protean.optimizer as optimizer
+
+    calls = {"eval": 0, "stream": []}
+
+    def fake_evaluate_kernel(source, *, op, reps, warmup):
+        calls["eval"] += 1
+        if calls["eval"] == 1:
+            return {"rows": [], "correct_held_out": 3, "mean_held_out_speedup": 1.5, "mean_reward": 1.0}
+        return {"rows": [], "correct_held_out": 3, "mean_held_out_speedup": 1.4, "mean_reward": 0.9}
+
+    def fake_stream_candidate_to_hud(**kwargs):
+        calls["stream"].append(kwargs)
+        return {
+            "job_id": f"job-{kwargs['trial']}",
+            "job_url": f"https://hud.ai/jobs/job-{kwargs['trial']}",
+            "mean_reward": 0.5,
+            "rows": [{"slug": f"{kwargs['op']}_train", "reward": 0.5}],
+        }
+
+    fake_hud_stream = types.ModuleType("protean.hud_stream")
+    fake_hud_stream.stream_candidate_to_hud = fake_stream_candidate_to_hud
+
+    monkeypatch.setattr(optimizer, "evaluate_kernel", fake_evaluate_kernel)
+    monkeypatch.setitem(sys.modules, "protean.hud_stream", fake_hud_stream)
+
+    result = run_optimization(out_dir=tmp_path, max_rounds=1, stream_hud=True)
+
+    rows = [(json.loads(line)) for line in (tmp_path / "trials.jsonl").read_text().splitlines()]
+    trials = [row for row in rows if row["event"] == "trial"]
+    assert result["stream_hud"] is True
+    assert result["trials"] == 5
+    assert len(calls["stream"]) == 5
+    assert trials[0]["trial"] == 1
+    assert trials[0]["op"] == "elementwise_add_relu"
+    assert trials[0]["hud_stream"]["job_url"] == "https://hud.ai/jobs/job-1"
+    assert trials[0]["hud_stream_error"] is None
+
+
+def test_optimizer_logs_hud_stream_error_without_killing_trial(tmp_path, monkeypatch):
+    import protean.optimizer as optimizer
+
+    calls = {"eval": 0}
+
+    def fake_evaluate_kernel(source, *, op, reps, warmup):
+        calls["eval"] += 1
+        if calls["eval"] == 1:
+            return {"rows": [], "correct_held_out": 3, "mean_held_out_speedup": 1.5, "mean_reward": 1.0}
+        return {"rows": [], "correct_held_out": 3, "mean_held_out_speedup": 1.4, "mean_reward": 0.9}
+
+    def fake_stream_candidate_to_hud(**kwargs):
+        raise RuntimeError("hud unavailable")
+
+    fake_hud_stream = types.ModuleType("protean.hud_stream")
+    fake_hud_stream.stream_candidate_to_hud = fake_stream_candidate_to_hud
+
+    monkeypatch.setattr(optimizer, "evaluate_kernel", fake_evaluate_kernel)
+    monkeypatch.setitem(sys.modules, "protean.hud_stream", fake_hud_stream)
+
+    run_optimization(out_dir=tmp_path, max_rounds=1, stream_hud=True)
+
+    rows = [(json.loads(line)) for line in (tmp_path / "trials.jsonl").read_text().splitlines()]
+    trial = [row for row in rows if row["event"] == "trial"][0]
+    assert trial["hud_stream"] is None
+    assert trial["hud_stream_error"] == {"type": "RuntimeError", "message": "hud unavailable"}

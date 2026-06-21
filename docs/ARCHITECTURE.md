@@ -31,6 +31,7 @@ flowchart TB
         M["trials.jsonl"]
         N["best_kernel_<op>.py"]
         O["demo/*.json + *.md"]
+        P["HUD per-trial job URLs"]
     end
 
     A --> D
@@ -46,6 +47,7 @@ flowchart TB
     K --> M
     K --> N
     K --> O
+    M --> P
 ```
 
 ## Core Modules
@@ -96,6 +98,8 @@ stateDiagram-v2
 
 Candidate evaluation errors are not fatal. The optimizer catches verifier exceptions, logs `eval_error`, assigns zero score, rejects the candidate, and continues.
 
+If `--stream-hud` is enabled, the optimizer also submits each candidate source to HUD after the local accept/reject decision. HUD receives the same candidate source and grades the train and held-out task for that op. The optimizer logs the returned `hud_stream.job_url`; if HUD is unavailable, it logs `hud_stream_error` and keeps optimizing.
+
 ## HUD Path
 
 `src/protean/env.py` exposes four concrete HUD tasks:
@@ -113,6 +117,8 @@ The HUD wrapper does not duplicate grading logic. It calls:
 grade_source(source, op=op, split=split, shape=shape)
 ```
 
+Optimizer trial streaming uses `src/protean/hud_stream.py`. It creates a small HUD agent that submits the already-generated candidate source, then runs the two HUD tasks for that op through `LocalRuntime`. This is one HUD job per trial snapshot, not a single live-updating job.
+
 ## Verified Spark Commands
 
 ```bash
@@ -124,6 +130,7 @@ python scripts/smoke_verifier.py --op elementwise_add_relu
 python scripts/smoke_verifier.py --op rmsnorm
 python scripts/run_optimizer.py --all-ops --max-rounds 1
 HUD_API_KEY=... PYTHONPATH=src python scripts/run_hud_demo_agent.py
+HUD_API_KEY=... PYTHONPATH=src python scripts/run_optimizer.py --op elementwise_add_relu --max-rounds 1 --stream-hud
 ```
 
 ## Design Boundaries

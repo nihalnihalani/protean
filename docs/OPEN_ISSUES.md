@@ -4,23 +4,25 @@ This file tracks current gaps only. Older KERNEL-FORGE adversarial notes live in
 
 ## Blocking For The Next Live Run
 
-### 1. Fireworks key missing on Spark
+### 1. Fireworks overnight run needs fresh results
 
-Status: blocked by environment.
+Status: ready to run.
 
-The Fireworks backend is wired, but the latest Spark check did not find `FIREWORKS_API_KEY`.
+The Fireworks backend is wired, Spark has the required environment, and optimizer trials can stream to HUD. The remaining gap is a longer overnight run with enough trials to show whether model-generated edits improve over the current best kernels.
 
 Needed:
 
 ```bash
 export FIREWORKS_API_KEY=...
-python scripts/run_optimizer.py --edit-policy fireworks --all-ops --max-rounds 20 --out-dir runs/protean-fireworks-overnight
+export HUD_API_KEY=...
+python scripts/run_optimizer.py --edit-policy fireworks --all-ops --max-rounds 20 --stream-hud --out-dir runs/protean-fireworks-overnight
 ```
 
 Acceptance:
 
 - every candidate appears under `runs/protean-fireworks-overnight/candidates/`
 - every trial appears in `trials.jsonl`
+- every trial has either `hud_stream.job_url` or `hud_stream_error`
 - model tokens are logged
 - compile/runtime failures are rejected with `eval_error`
 
@@ -92,4 +94,5 @@ Current checks block obvious passthroughs. They are not a sandbox. Future harden
 - HUD `reward=...` adapter fixed so dashboard shows non-zero reward.
 - Optimizer compile/runtime crashes now log as rejected trials.
 - HUD deterministic demo agent added and verified.
+- Optimizer trial streaming to HUD added and smoke-tested.
 - README updated with current job links and Spark numbers.

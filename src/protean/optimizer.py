@@ -61,6 +61,9 @@ def run_optimization(
     edit_policy: str = "local",
     op: str = "elementwise_add_relu",
     fireworks_model: str | None = None,
+    stream_hud: bool = False,
+    hud_env_source: str | Path = "src/protean/env.py",
+    hud_timeout: float = 180.0,
 ) -> dict:
     out = Path(out_dir)
     out.mkdir(parents=True, exist_ok=True)
@@ -149,13 +152,36 @@ def run_optimization(
                     best_score = candidate_score
                     best_path.write_text(best_source)
 
+                hud_stream = None
+                hud_stream_error = None
+                if stream_hud:
+                    try:
+                        from protean.hud_stream import stream_candidate_to_hud
+
+                        hud_stream = stream_candidate_to_hud(
+                            source=edit.source,
+                            op=op,
+                            trial=trial_count,
+                            edit=edit.name,
+                            accepted=accepted,
+                            env_source=hud_env_source,
+                            timeout=hud_timeout,
+                        )
+                    except Exception as exc:  # noqa: BLE001 - streaming should not kill optimization.
+                        hud_stream_error = {
+                            "type": type(exc).__name__,
+                            "message": str(exc),
+                        }
+
                 log.write(
                     json.dumps(
                         {
                             "event": "trial",
                             "time": time.time(),
                             "elapsed_sec": round(time.time() - started, 6),
+                            "trial": trial_count,
                             "round": round_idx,
+                            "op": op,
                             "edit": edit.name,
                             "reason": edit.reason,
                             "policy": edit.policy,
@@ -169,6 +195,8 @@ def run_optimization(
                             "delta_vs_best": score_delta(candidate_score, before_score),
                             "accepted": accepted,
                             "eval_error": eval_error,
+                            "hud_stream": hud_stream,
+                            "hud_stream_error": hud_stream_error,
                             "summary": candidate_summary,
                         },
                         sort_keys=True,
@@ -187,6 +215,7 @@ def run_optimization(
         "policy_path": str(policy_path) if policy_path is not None else None,
         "edit_policy": edit_policy,
         "op": op,
+        "stream_hud": stream_hud,
     }
     summary_path.write_text(json.dumps(final, indent=2, sort_keys=True) + "\n")
     return final
