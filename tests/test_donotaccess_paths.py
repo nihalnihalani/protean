@@ -1,7 +1,7 @@
 import os
 import pytest
 import stat
-from protean.grader import hidden_dir
+from protean.scenario_helpers import hidden_dir
 
 def test_hidden_dir_resolves_locally():
     # Test that when running in source tree (no /donotaccess/),
