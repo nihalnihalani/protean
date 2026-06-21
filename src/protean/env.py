@@ -1,9 +1,16 @@
 """HUD public wrapper around the direct Protean verifier."""
 
-from __future__ import annotations
+# NOTE: this file deliberately omits ``from __future__ import annotations``. Do NOT add it
+# back: under it, an ``@env.template`` parameter typed with ``int | None`` (or any
+# Literal/Optional/alias/Pydantic model) crashes at deploy/start because the HUD server
+# runs ``TypeAdapter`` on a string forward-ref -> PydanticUserError, surfaced as JSON-RPC
+# ``-32000``. Without it, annotations resolve to real objects and any param type works.
+# Python 3.12 supports ``int | None``/``str | None`` natively (PEP 604), so removal is
+# runtime-safe. Mirrors the verilog-template guidance. Leave the future-import out.
 
 import json
 import os
+import sys
 from collections.abc import AsyncGenerator
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, get_args
@@ -71,7 +78,17 @@ def configure_triton_cache_dir() -> str:
     raise RuntimeError("no writable Triton cache directory found")
 
 
-configure_triton_cache_dir()
+# Configure the Triton cache at import time as a best-effort convenience, but do
+# NOT let a non-writable cache dir abort the import. On a locked-down deploy image
+# (read-only home, no writable /triton-cache) configure_triton_cache_dir() raises
+# RuntimeError; if that fired here unguarded it would shadow the HUD loud-fail
+# (assert_templates_registered) with a confusing Triton error before any guard ran.
+# The authoritative configuration happens in the @env.initialize serve hook, which
+# fails loud there if it truly cannot find a cache dir. Here we only warn.
+try:
+    configure_triton_cache_dir()
+except Exception as _triton_exc:  # pragma: no cover - exercised only on locked-down hosts.
+    print(f"protean env: import-time Triton cache configuration skipped ({_triton_exc}); will retry at serve startup.")
 
 
 def _read_prompt(op: str) -> str:
@@ -140,6 +157,61 @@ def _make_env():
 env = _make_env()
 
 
+#: Template ids that MUST be registered for a healthy deploy. Kept as an explicit
+#: tuple so the loud-fail guard and the initialize hook can verify against a single
+#: source of truth rather than a magic number.
+EXPECTED_TEMPLATE_IDS: tuple[str, ...] = (
+    "elementwise_add_relu",
+    "rmsnorm",
+    "softmax_rows",
+)
+
+
+def registered_template_ids() -> tuple[str, ...]:
+    """Return the template ids HUD actually registered on ``env``.
+
+    Returns an empty tuple when ``hud`` is unavailable (``env is None``) so the
+    hud-less import path stays non-fatal; the loud-fail logic lives in
+    :func:`assert_templates_registered`.
+    """
+
+    if env is None:
+        return ()
+    # v6 exposes both ``tasks`` and ``templates`` dicts keyed by template id.
+    registry = getattr(env, "tasks", None) or getattr(env, "templates", None) or {}
+    try:
+        return tuple(registry)
+    except TypeError:  # pragma: no cover - defensive: unexpected registry shape.
+        return ()
+
+
+def assert_templates_registered() -> None:
+    """Fail loud if the env is missing or any expected template did not register.
+
+    This is the deploy/serve safety net: the guarded ``hud`` import keeps the
+    package importable without the ``hud`` extra (CI's ``test`` extra omits it),
+    but that same guard means a *failed* hud import in the deploy image would
+    otherwise silently register ZERO templates and serve an empty env. Call this
+    only from a serve/deploy context (the ``@env.initialize`` hook below, or the
+    ``sys.argv``/``HUD_SERVE`` guard) so the hud-less import path is unaffected.
+    """
+
+    if env is None:
+        raise RuntimeError(
+            "Protean HUD env cannot serve: the 'hud' package is not importable "
+            "(Environment is None), so zero templates are registered. Install "
+            "hud-python[agents] in the deploy image (see Dockerfile.hud)."
+        )
+    registered = set(registered_template_ids())
+    missing = [tid for tid in EXPECTED_TEMPLATE_IDS if tid not in registered]
+    if missing:
+        raise RuntimeError(
+            "Protean HUD env cannot serve: env loaded but template registration "
+            f"is incomplete. Missing {missing!r}; registered {sorted(registered)!r}. "
+            "Expected elementwise_add_relu, rmsnorm, softmax_rows."
+        )
+
+
 def _template(template_id: str) -> Any:
     # The concrete return type is HUD's opaque template decorator; hud.* has no
     # stubs (ignore_missing_imports), so this is annotated as Any.
@@ -193,6 +265,40 @@ if env is not None:
     softmax_rows_held_out = softmax_rows(split="held_out")
     softmax_rows_held_out.slug = "softmax_rows_held_out"
     softmax_rows_held_out.columns = {"op": "softmax_rows", "split": "held_out"}
+
+    @env.initialize
+    async def _on_serve_start() -> None:
+        """Serve-time startup hook (runs once before the control channel serves).
+
+        Near-no-op: it (1) asserts every expected template registered so a broken
+        deploy fails loud in the container logs instead of silently serving an
+        empty env, and (2) authoritatively configures the Triton cache directory
+        (the import-time call is best-effort/non-fatal; this is where a truly
+        unwritable cache dir fails loud, and it does so *after* the template
+        assertion so a registration failure is attributed correctly). CUDA is
+        intentionally probed best-effort only (kernel grading needs a GPU, but the
+        env must still boot on CPU-only hosts for smoke tests), so a missing GPU is
+        logged, not fatal.
+        """
+
+        # Order matters: assert templates FIRST so a registration failure is the
+        # reported error, then configure the cache (authoritative; may raise).
+        assert_templates_registered()
+        configure_triton_cache_dir()
+        try:  # pragma: no cover - GPU probe is environment-specific.
+            import torch
+
+            if not torch.cuda.is_available():
+                print("protean env: CUDA not available; kernel grading will run on CPU/eager.")
+        except Exception as exc:  # pragma: no cover - torch optional at serve boot.
+            print(f"protean env: CUDA probe skipped ({exc}).")
+
+    @env.shutdown
+    async def _on_serve_stop() -> None:
+        """Serve-time shutdown hook (near-no-op; no long-lived resources to release)."""
+
+        return None
+
 else:
     elementwise_add_relu = {"id": "elementwise_add_relu", "op": "elementwise_add_relu"}
     rmsnorm = {"id": "rmsnorm", "op": "rmsnorm"}
@@ -204,6 +310,34 @@ else:
 # Backward-compatible metadata alias used by older imports. Keep it non-Task so
 # HUD task discovery does not count it as a duplicate public task.
 kernel_opt = {"id": "elementwise_add_relu_train", "op": "elementwise_add_relu", "split": "train"}
+
+
+# --- Deploy/serve loud-fail guard ---------------------------------------------
+# The guarded ``from hud import Environment`` import above keeps the package
+# importable without the ``hud`` extra (CI's ``test`` extra does not install it),
+# but that same guard means a *failed* hud import in the deploy image would
+# silently register ZERO templates and serve an empty env. To prevent that
+# silent-empty deploy while preserving the hud-less import path, fail loud only
+# when this module is actually loaded as the ``hud serve``/``hud dev`` entrypoint
+# (detected via ``sys.argv`` or the ``HUD_SERVE`` env-var). Under ``pytest``
+# neither condition holds, so this is a no-op for the test suite.
+_SERVE_VERBS = frozenset({"serve", "dev"})
+_RUNNING_AS_SERVE = bool(os.environ.get("HUD_SERVE")) or any(_arg in _SERVE_VERBS for _arg in sys.argv[1:3])
+if _RUNNING_AS_SERVE:
+    # Belt-and-suspenders with the @env.initialize hook: fail at import time too,
+    # in case the env is loaded as a serve entrypoint by a path that does not run
+    # the initialize hooks.
+    #
+    # ORDERING ASSUMPTION: templates register at decorator-application time (the
+    # @_template(...) decorators above run during module import), so by the time
+    # this guard executes the templates are already registered or never will be.
+    # That makes this import-time check correct for the current HUD SDK. If the
+    # SDK ever switches to LAZY template registration (templates registered only
+    # when the serve loop starts, after import), this guard would falsely pass on
+    # zero templates -- in that case move it into @env.initialize only. The
+    # test_templates_registered_immediately_after_import test below pins the
+    # current eager-registration behavior and will fail if the SDK changes.
+    assert_templates_registered()
 
 
 def main() -> int:

@@ -28,9 +28,14 @@ from protean.kernels import seed_kernel_for
 class ProteanDemoAgent(Agent):
     """Submit the correct hand-optimized kernel for the prompted op."""
 
+    # All three Protean ops, longest/most-specific first so a substring of one op
+    # name never shadows another. (e.g. ensure "softmax_rows" is detected, not
+    # silently graded as the elementwise_add_relu fallback.)
+    _OPS = ("elementwise_add_relu", "softmax_rows", "rmsnorm")
+
     async def __call__(self, run) -> None:
         prompt = (run.prompt_text or "").lower()
-        op = "rmsnorm" if "rmsnorm" in prompt else "elementwise_add_relu"
+        op = next((o for o in self._OPS if o in prompt), "elementwise_add_relu")
         answer = seed_kernel_for(op)
         run.trace.content = answer
         run.trace.extra["agent"] = "protean_demo_agent"

@@ -296,6 +296,22 @@ def ast_clean(src: str) -> tuple[bool, str]:
     return True, ""
 
 
+# The audit hook is installed permanently (sys.addaudithook cannot be removed),
+# but it only ENFORCES inside the candidate-exec window. Outside it, the host
+# process -- and torch/triton/vllm, which import the concurrency family and spawn
+# threads, plus our own concurrent.futures use in hud_stream._run_sync -- must run
+# unimpeded. set_audit_armed(True/False) brackets the exec_module call in
+# bench_core.load_solution. Without this gate, the first graded candidate would
+# leave a process-wide ban on threading/concurrent that breaks all later host code.
+_AUDIT_ARMED = False
+
+
+def set_audit_armed(active: bool) -> None:
+    """Arm/disarm the import audit hook around the candidate-exec window."""
+    global _AUDIT_ARMED
+    _AUDIT_ARMED = bool(active)
+
+
 def _audit_import_hook(event: str, args: tuple) -> None:
     """PEP 578 audit hook that blocks runtime imports of banned modules.
 
@@ -320,6 +336,8 @@ def _audit_import_hook(event: str, args: tuple) -> None:
     runtime bypasses, NOT as a hard security boundary.
     Source: PEP 578; CPython issue #87604; IMPROVEMENT_RESEARCH.md item #14.
     """
+    if not _AUDIT_ARMED:
+        return
     if event != "import":
         return
     module = args[0] if args else ""
