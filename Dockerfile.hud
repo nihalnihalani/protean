@@ -7,7 +7,7 @@ ENV PATH="/opt/venv/bin:${PATH}"
 ENV TORCH_CUDA_ARCH_LIST="8.0;8.6;8.9;9.0"
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-        python3.11 python3.11-venv python3-pip git util-linux && \
+        python3.11 python3.11-venv python3.11-dev python3-pip git util-linux && \
     rm -rf /var/lib/apt/lists/*
 
 RUN mkdir -p /triton-cache && chmod 777 /triton-cache
